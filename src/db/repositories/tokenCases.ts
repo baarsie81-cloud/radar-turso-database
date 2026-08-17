@@ -1,10 +1,17 @@
 import type { Client, Row } from "@libsql/client";
 import { RADAR_VERSION } from "../../domain/types";
-import type { CaseStatus, LifecycleStage } from "../../domain/types";
+import type {
+  CaseStatus,
+  LifecycleStage,
+  OutcomeLabel,
+  Snapshot,
+  SnapshotStage,
+} from "../../domain/types";
+import { labelOutcome } from "../../outcomes/label";
 import { bool01, num, numOrNull, str, strOrNull } from "../map";
-import { listDecisionsByCase, type DecisionRow } from "./decisions";
-import { listSnapshotsByCase, type SnapshotRow } from "./snapshots";
-import { listSocialCallsByCase, type SocialCallRow } from "./socialCalls";
+import { mapDecisionRow, type DecisionRow } from "./decisions";
+import { listSnapshotsByCase, mapSnapshotRow, type SnapshotRow } from "./snapshots";
+import { mapSocialCallRow, type SocialCallRow } from "./socialCalls";
 
 export type CreateTokenCaseInput = {
   mint: string;
@@ -30,6 +37,9 @@ export type TokenCaseRow = {
   stage: LifecycleStage;
   caseStatus: CaseStatus;
   radarVersion: string;
+  outcomeLabel: OutcomeLabel | null;
+  outcomeLabeledAt: number | null;
+  outcomeInputsJson: string | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -53,9 +63,73 @@ export function mapTokenCaseRow(row: Row): TokenCaseRow {
     stage: str(row.stage) as LifecycleStage,
     caseStatus: str(row.case_status) as CaseStatus,
     radarVersion: str(row.radar_version),
+    outcomeLabel: strOrNull(row.outcome_label) as OutcomeLabel | null,
+    outcomeLabeledAt: numOrNull(row.outcome_labeled_at),
+    outcomeInputsJson: strOrNull(row.outcome_inputs_json),
     createdAt: num(row.created_at),
     updatedAt: num(row.updated_at),
   };
+}
+
+function snapshotsByStage(
+  rows: SnapshotRow[],
+): Partial<Record<SnapshotStage, Snapshot>> {
+  const mapped: Partial<Record<SnapshotStage, Snapshot>> = {};
+  for (const row of rows) {
+    mapped[row.stage] = {
+      stage: row.stage,
+      capturedAt: row.capturedAt,
+      price: row.price,
+      roiPct: row.roiPct,
+      marketCap: row.marketCap,
+      liquidityUsd: row.liquidityUsd,
+    };
+  }
+  return mapped;
+}
+
+export async function closeCase(
+  client: Client,
+  tokenCaseId: number,
+  closedAt: number = Date.now(),
+): Promise<TokenCaseRow> {
+  const tokenCase = await getTokenCase(client, tokenCaseId);
+  if (!tokenCase) {
+    throw new Error("Token case not found");
+  }
+
+  const snapshots = await listSnapshotsByCase(client, tokenCaseId);
+  const outcome = labelOutcome(
+    { entryPrice: tokenCase.entryPrice, entryValid: tokenCase.entryValid },
+    snapshotsByStage(snapshots),
+  );
+
+  const result = await client.execute({
+    sql: `
+      UPDATE token_cases SET
+        stage = 'CLOSED',
+        case_status = 'CLOSED',
+        outcome_label = ?,
+        outcome_labeled_at = ?,
+        outcome_inputs_json = ?,
+        updated_at = ?
+      WHERE id = ?
+      RETURNING *
+    `,
+    args: [
+      outcome.outcomeLabel,
+      outcome.outcomeLabel == null ? null : closedAt,
+      outcome.inputsJson,
+      closedAt,
+      tokenCaseId,
+    ],
+  });
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Failed to close token case");
+  }
+  return mapTokenCaseRow(row);
 }
 
 export async function createTokenCase(
@@ -139,6 +213,72 @@ export async function listTokenCases(
   return result.rows.map(mapTokenCaseRow);
 }
 
+type CaseRelations = {
+  snapshots: SnapshotRow[];
+  decisions: DecisionRow[];
+  socialCalls: SocialCallRow[];
+};
+
+async function loadCaseRelationsByIds(
+  client: Client,
+  tokenCaseIds: number[],
+): Promise<Map<number, CaseRelations>> {
+  const grouped = new Map<number, CaseRelations>(
+    tokenCaseIds.map((id) => [
+      id,
+      { snapshots: [], decisions: [], socialCalls: [] },
+    ]),
+  );
+  if (tokenCaseIds.length === 0) {
+    return grouped;
+  }
+
+  const placeholders = tokenCaseIds.map(() => "?").join(", ");
+  const [snapshotResult, decisionResult, socialResult] = await Promise.all([
+    client.execute({
+      sql: `SELECT * FROM snapshots WHERE token_case_id IN (${placeholders}) ORDER BY id`,
+      args: tokenCaseIds,
+    }),
+    client.execute({
+      sql: `SELECT * FROM decisions WHERE token_case_id IN (${placeholders}) ORDER BY decided_at, id`,
+      args: tokenCaseIds,
+    }),
+    client.execute({
+      sql: `SELECT * FROM social_calls WHERE token_case_id IN (${placeholders}) ORDER BY called_at, id`,
+      args: tokenCaseIds,
+    }),
+  ]);
+
+  for (const row of snapshotResult.rows) {
+    const mapped = mapSnapshotRow(row);
+    grouped.get(mapped.tokenCaseId)?.snapshots.push(mapped);
+  }
+  for (const row of decisionResult.rows) {
+    const mapped = mapDecisionRow(row);
+    grouped.get(mapped.tokenCaseId)?.decisions.push(mapped);
+  }
+  for (const row of socialResult.rows) {
+    const mapped = mapSocialCallRow(row);
+    if (mapped.tokenCaseId != null) {
+      grouped.get(mapped.tokenCaseId)?.socialCalls.push(mapped);
+    }
+  }
+
+  return grouped;
+}
+
+function toCaseSummary(
+  tokenCase: TokenCaseRow,
+  relations: Map<number, CaseRelations>,
+): CaseSummary {
+  const related = relations.get(tokenCase.id) ?? {
+    snapshots: [],
+    decisions: [],
+    socialCalls: [],
+  };
+  return { tokenCase, ...related };
+}
+
 export async function getCaseSummary(
   client: Client,
   tokenCaseId: number,
@@ -148,11 +288,18 @@ export async function getCaseSummary(
     return null;
   }
 
-  const [snapshots, decisions, socialCalls] = await Promise.all([
-    listSnapshotsByCase(client, tokenCaseId),
-    listDecisionsByCase(client, tokenCaseId),
-    listSocialCallsByCase(client, tokenCaseId),
-  ]);
+  const relations = await loadCaseRelationsByIds(client, [tokenCase.id]);
+  return toCaseSummary(tokenCase, relations);
+}
 
-  return { tokenCase, snapshots, decisions, socialCalls };
+export async function listCaseSummaries(
+  client: Client,
+  filter: ListTokenCasesFilter = {},
+): Promise<CaseSummary[]> {
+  const tokenCases = await listTokenCases(client, filter);
+  const relations = await loadCaseRelationsByIds(
+    client,
+    tokenCases.map((row) => row.id),
+  );
+  return tokenCases.map((tokenCase) => toCaseSummary(tokenCase, relations));
 }

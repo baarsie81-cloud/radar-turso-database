@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Client } from "@libsql/client";
 import { getDecisionReplay } from "../db/repositories/decisions";
-import { getCaseSummary, listTokenCases } from "../db/repositories/tokenCases";
+import { getCaseSummary, listCaseSummaries } from "../db/repositories/tokenCases";
 import {
   LIFECYCLE_STAGES,
   SNAPSHOT_STAGES,
@@ -48,7 +48,7 @@ export function createApiApp(client: Client): Hono {
       return c.json({ error: "Invalid stage" }, 400);
     }
 
-    const cases = await listTokenCases(client, {
+    const cases = await listCaseSummaries(client, {
       caseStatus: caseStatus && isCaseStatus(caseStatus) ? caseStatus : undefined,
       stage: stage && isLifecycleStage(stage) ? stage : undefined,
       mint: mint || undefined,

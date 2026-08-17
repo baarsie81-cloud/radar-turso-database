@@ -14,9 +14,11 @@ export {
 } from "./db/repositories/socialCalls";
 export type { SocialCallRow } from "./db/repositories/socialCalls";
 export {
+  closeCase,
   createTokenCase,
   getCaseSummary,
   getTokenCase,
+  listCaseSummaries,
   listTokenCases,
 } from "./db/repositories/tokenCases";
 export type {
@@ -25,11 +27,16 @@ export type {
   TokenCaseRow,
 } from "./db/repositories/tokenCases";
 export { evaluateRadar24, roiPct } from "./decisions/engine";
+export { labelOutcome } from "./outcomes/label";
 export {
   LIFECYCLE_STAGES,
+  OUTCOME_LABELS,
+  OUTCOME_WINDOW_STAGES,
   PLUS_10_ROI_MIN_PCT,
   RADAR_VERSION,
   REJECT_REASONS,
+  RUNNER_MIN_PCT,
+  SMALL_WIN_MIN_PCT,
   SNAPSHOT_STAGES,
 } from "./domain/types";
 export type {
@@ -38,6 +45,10 @@ export type {
   DecisionStatus,
   EvaluateInput,
   LifecycleStage,
+  OutcomeInputs,
+  OutcomeLabel,
+  OutcomeResult,
+  OutcomeWindowStage,
   RejectReason,
   Snapshot,
   SnapshotStage,

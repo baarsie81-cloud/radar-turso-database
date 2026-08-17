@@ -70,24 +70,73 @@ describe("read API", () => {
     expect(await response.json()).toEqual({ ok: true });
   });
 
+  it("lists multiple case summaries", async () => {
+    const { app } = await setupApp();
+
+    const response = await app.request("/cases");
+    expect(response.status).toBe(200);
+
+    const body = (await response.json()) as Array<{
+      tokenCase: { mint: string };
+      snapshots: unknown[];
+      decisions: unknown[];
+      socialCalls: unknown[];
+    }>;
+    expect(body).toHaveLength(2);
+    expect(body.map((row) => row.tokenCase.mint)).toEqual(["MintA", "MintB"]);
+    expect(body.every((row) => Array.isArray(row.snapshots))).toBe(true);
+    expect(body.every((row) => Array.isArray(row.decisions))).toBe(true);
+    expect(body.every((row) => Array.isArray(row.socialCalls))).toBe(true);
+  });
+
   it("lists cases with optional filters", async () => {
     const { app } = await setupApp();
 
-    const all = await app.request("/cases");
-    expect(all.status).toBe(200);
-    expect(await all.json()).toHaveLength(2);
-
     const open = await app.request("/cases?case_status=OPEN");
-    const openBody = (await open.json()) as Array<{ mint: string }>;
+    const openBody = (await open.json()) as Array<{ tokenCase: { mint: string } }>;
     expect(open.status).toBe(200);
-    expect(openBody.map((row) => row.mint)).toEqual(["MintA"]);
+    expect(openBody.map((row) => row.tokenCase.mint)).toEqual(["MintA"]);
 
     const mintA = await app.request("/cases?mint=MintA&stage=PLUS_10");
-    const mintABody = (await mintA.json()) as Array<{ mint: string }>;
+    const mintABody = (await mintA.json()) as Array<{ tokenCase: { mint: string } }>;
     expect(mintABody).toHaveLength(1);
+    expect(mintABody[0]?.tokenCase.mint).toBe("MintA");
+
+    const closed = await app.request("/cases?case_status=CLOSED");
+    const closedBody = (await closed.json()) as Array<{ tokenCase: { mint: string } }>;
+    expect(closedBody.map((row) => row.tokenCase.mint)).toEqual(["MintB"]);
 
     const invalid = await app.request("/cases?case_status=NOPE");
     expect(invalid.status).toBe(400);
+  });
+
+  it("includes snapshots, decisions, and socialCalls on listed summaries", async () => {
+    const { app } = await setupApp();
+
+    const response = await app.request("/cases?mint=MintA");
+    const body = (await response.json()) as Array<{
+      tokenCase: { mint: string };
+      snapshots: unknown[];
+      decisions: unknown[];
+      socialCalls: unknown[];
+    }>;
+
+    expect(body).toHaveLength(1);
+    expect(body[0]?.tokenCase.mint).toBe("MintA");
+    expect(body[0]?.snapshots).toHaveLength(2);
+    expect(body[0]?.decisions).toHaveLength(1);
+    expect(body[0]?.socialCalls).toHaveLength(1);
+
+    const empty = await app.request("/cases?mint=MintB");
+    const emptyBody = (await empty.json()) as Array<{
+      snapshots: unknown[];
+      decisions: unknown[];
+      socialCalls: unknown[];
+    }>;
+    expect(emptyBody).toHaveLength(1);
+    expect(emptyBody[0]?.snapshots).toEqual([]);
+    expect(emptyBody[0]?.decisions).toEqual([]);
+    expect(emptyBody[0]?.socialCalls).toEqual([]);
   });
 
   it("returns a case summary by id", async () => {

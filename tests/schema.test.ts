@@ -81,4 +81,54 @@ describe("0001_init schema", () => {
     await client.execute(insert);
     await expect(client.execute(insert)).rejects.toThrow();
   });
+
+  it("adds nullable outcome columns and only allows labels on CLOSED cases", async () => {
+    const client = await createTursoClient({ url: ":memory:" });
+    const ran = await migrate(client);
+    expect(ran).toContain("0002_outcome_label");
+
+    const now = Date.now();
+    await client.execute({
+      sql: `
+        INSERT INTO token_cases (
+          mint, first_seen_at, entry_price, entry_valid, stage, case_status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: ["SoMint", now, 1.5, 1, "PLUS_60", "OPEN", now, now],
+    });
+
+    const unlabeled = await client.execute(
+      "SELECT outcome_label, outcome_labeled_at, outcome_inputs_json FROM token_cases WHERE id = 1",
+    );
+    expect(unlabeled.rows[0]?.outcome_label).toBeNull();
+    expect(unlabeled.rows[0]?.outcome_labeled_at).toBeNull();
+    expect(unlabeled.rows[0]?.outcome_inputs_json).toBeNull();
+
+    await expect(
+      client.execute({
+        sql: `UPDATE token_cases SET outcome_label = 'RUNNER' WHERE id = 1`,
+        args: [],
+      }),
+    ).rejects.toThrow();
+
+    await client.execute({
+      sql: `
+        UPDATE token_cases
+        SET case_status = 'CLOSED', stage = 'CLOSED', outcome_label = 'SMALL_WIN',
+            outcome_labeled_at = ?, outcome_inputs_json = ?
+        WHERE id = 1
+      `,
+      args: [now, JSON.stringify({ peakRoiPct: 40 })],
+    });
+
+    const labeled = await client.execute(
+      "SELECT case_status, outcome_label FROM token_cases WHERE id = 1",
+    );
+    expect(labeled.rows[0]?.case_status).toBe("CLOSED");
+    expect(labeled.rows[0]?.outcome_label).toBe("SMALL_WIN");
+
+    await expect(
+      client.execute("UPDATE token_cases SET outcome_label = 'FAILED' WHERE id = 1"),
+    ).rejects.toThrow();
+  });
 });

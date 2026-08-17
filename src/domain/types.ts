@@ -33,6 +33,35 @@ export type RejectReason = (typeof REJECT_REASONS)[number];
 
 export const PLUS_10_ROI_MIN_PCT = 25;
 
+export const OUTCOME_WINDOW_STAGES = ["PLUS_15", "PLUS_30", "PLUS_60"] as const;
+
+export type OutcomeWindowStage = (typeof OUTCOME_WINDOW_STAGES)[number];
+
+export const OUTCOME_LABELS = ["NO_RESULT", "SMALL_WIN", "RUNNER"] as const;
+
+export type OutcomeLabel = (typeof OUTCOME_LABELS)[number];
+
+export const SMALL_WIN_MIN_PCT = 25;
+export const RUNNER_MIN_PCT = 100;
+
+export type OutcomeInputs = {
+  entryPrice: number;
+  peakRoiPct: number;
+  terminalRoiPct: number;
+  stagesUsed: OutcomeWindowStage[];
+  smallWinMinPct: number;
+  runnerMinPct: number;
+};
+
+export type OutcomeResult = {
+  outcomeLabel: OutcomeLabel | null;
+  peakRoiPct: number | null;
+  terminalRoiPct: number | null;
+  stagesUsed: OutcomeWindowStage[];
+  inputs: OutcomeInputs | null;
+  inputsJson: string | null;
+};
+
 export type Snapshot = {
   stage: SnapshotStage;
   capturedAt: number | null;

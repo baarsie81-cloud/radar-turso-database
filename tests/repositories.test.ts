@@ -4,7 +4,13 @@ import { migrate } from "../src/db/migrate";
 import { getDecisionReplay, storeDecision } from "../src/db/repositories/decisions";
 import { listSnapshotsByCase, upsertSnapshot } from "../src/db/repositories/snapshots";
 import { storeSocialCall } from "../src/db/repositories/socialCalls";
-import { createTokenCase, getCaseSummary, listTokenCases } from "../src/db/repositories/tokenCases";
+import {
+  closeCase,
+  createTokenCase,
+  getCaseSummary,
+  listCaseSummaries,
+  listTokenCases,
+} from "../src/db/repositories/tokenCases";
 import { evaluateRadar24 } from "../src/decisions/engine";
 
 async function setup() {
@@ -295,5 +301,131 @@ describe("repositories", () => {
 
     const all = await listTokenCases(client);
     expect(all).toHaveLength(3);
+  });
+
+  it("lists case summaries with related snapshots, decisions, and social calls", async () => {
+    const client = await setup();
+    const now = 1_700_000_000_000;
+
+    const mintA = await createTokenCase(client, {
+      mint: "MintA",
+      firstSeenAt: now,
+      stage: "PLUS_10",
+      caseStatus: "OPEN",
+    });
+    const mintB = await createTokenCase(client, {
+      mint: "MintB",
+      firstSeenAt: now + 1,
+      stage: "PLUS_10",
+      caseStatus: "CLOSED",
+    });
+
+    await upsertSnapshot(client, {
+      tokenCaseId: mintA.id,
+      stage: "INITIAL",
+      capturedAt: now,
+      price: 100,
+    });
+    await storeDecision(client, {
+      tokenCaseId: mintA.id,
+      decisionStage: "PLUS_10",
+      decidedAt: now + 10 * 60_000,
+      decisionStatus: "PASS",
+      inputsJson: JSON.stringify({ plus10RoiPct: 30 }),
+    });
+    await storeSocialCall(client, {
+      source: "twitter",
+      externalId: "tweet-summary",
+      calledAt: now,
+      tokenCaseId: mintA.id,
+      mint: "MintA",
+    });
+
+    const all = await listCaseSummaries(client);
+    expect(all).toHaveLength(2);
+    expect(all.map((row) => row.tokenCase.id)).toEqual([mintA.id, mintB.id]);
+
+    const [summaryA, summaryB] = all;
+    expect(summaryA?.snapshots).toHaveLength(1);
+    expect(summaryA?.decisions).toHaveLength(1);
+    expect(summaryA?.socialCalls).toHaveLength(1);
+    expect(summaryB?.snapshots).toEqual([]);
+    expect(summaryB?.decisions).toEqual([]);
+    expect(summaryB?.socialCalls).toEqual([]);
+
+    const open = await listCaseSummaries(client, { caseStatus: "OPEN" });
+    expect(open).toHaveLength(1);
+    expect(open[0]?.tokenCase.mint).toBe("MintA");
+    expect(open[0]?.snapshots).toHaveLength(1);
+
+    const none = await listCaseSummaries(client, { mint: "MintZ" });
+    expect(none).toEqual([]);
+  });
+
+  it("persists closeCase outcome labels and leaves incomplete closes unlabeled", async () => {
+    const client = await setup();
+    const now = 1_700_000_000_000;
+
+    async function seedCase(mint: string, plus60Price: number | null) {
+      const tokenCase = await createTokenCase(client, {
+        mint,
+        firstSeenAt: now,
+        entryPrice: 100,
+        entryValid: true,
+        stage: "PLUS_60",
+      });
+      await upsertSnapshot(client, {
+        tokenCaseId: tokenCase.id,
+        stage: "PLUS_15",
+        capturedAt: now + 15 * 60_000,
+        price: 110,
+      });
+      if (plus60Price != null) {
+        await upsertSnapshot(client, {
+          tokenCaseId: tokenCase.id,
+          stage: "PLUS_60",
+          capturedAt: now + 60 * 60_000,
+          price: plus60Price,
+        });
+      }
+      return tokenCase;
+    }
+
+    const runnerCase = await seedCase("MintRunner", 250);
+    const smallWinCase = await seedCase("MintSmall", 140);
+    const noResultCase = await seedCase("MintNone", 110);
+    const incompleteCase = await seedCase("MintIncomplete", null);
+
+    const closedRunner = await closeCase(client, runnerCase.id, now + 1);
+    expect(closedRunner.caseStatus).toBe("CLOSED");
+    expect(closedRunner.stage).toBe("CLOSED");
+    expect(closedRunner.outcomeLabel).toBe("RUNNER");
+    expect(closedRunner.outcomeLabeledAt).toBe(now + 1);
+    expect(JSON.parse(closedRunner.outcomeInputsJson ?? "")).toMatchObject({
+      peakRoiPct: 150,
+      terminalRoiPct: 150,
+    });
+
+    const closedSmall = await closeCase(client, smallWinCase.id, now + 2);
+    expect(closedSmall.outcomeLabel).toBe("SMALL_WIN");
+    expect(closedSmall.outcomeLabeledAt).toBe(now + 2);
+
+    const closedNone = await closeCase(client, noResultCase.id, now + 3);
+    expect(closedNone.outcomeLabel).toBe("NO_RESULT");
+    expect(closedNone.outcomeLabeledAt).toBe(now + 3);
+
+    const closedIncomplete = await closeCase(client, incompleteCase.id, now + 4);
+    expect(closedIncomplete.caseStatus).toBe("CLOSED");
+    expect(closedIncomplete.stage).toBe("CLOSED");
+    expect(closedIncomplete.outcomeLabel).toBeNull();
+    expect(closedIncomplete.outcomeLabeledAt).toBeNull();
+    expect(closedIncomplete.outcomeInputsJson).toBeNull();
+
+    const reloaded = await getCaseSummary(client, incompleteCase.id);
+    expect(reloaded?.tokenCase.caseStatus).toBe("CLOSED");
+    expect(reloaded?.tokenCase.outcomeLabel).toBeNull();
+    expect(reloaded?.snapshots.map((row) => row.stage)).toEqual(["PLUS_15"]);
+
+    await expect(closeCase(client, 9999)).rejects.toThrow("Token case not found");
   });
 });
