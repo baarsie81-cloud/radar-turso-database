@@ -6,6 +6,8 @@
   "description": "Turso-first Moonshot Radar 2.4 core: token lifecycle snapshots, reproducible decisions, audit-only social calls.",
   "scripts": {
     "migrate": "tsx src/db/migrate.ts",
+    "dev": "tsx watch src/api/server.ts",
+    "start": "tsx src/api/server.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -13,7 +15,9 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@libsql/client": "^0.15.15"
+    "@hono/node-server": "^2.1.1",
+    "@libsql/client": "^0.15.15",
+    "hono": "^4.13.2"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

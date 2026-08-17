@@ -4,7 +4,7 @@ import { migrate } from "../src/db/migrate";
 import { getDecisionReplay, storeDecision } from "../src/db/repositories/decisions";
 import { listSnapshotsByCase, upsertSnapshot } from "../src/db/repositories/snapshots";
 import { storeSocialCall } from "../src/db/repositories/socialCalls";
-import { createTokenCase, getCaseSummary } from "../src/db/repositories/tokenCases";
+import { createTokenCase, getCaseSummary, listTokenCases } from "../src/db/repositories/tokenCases";
 import { evaluateRadar24 } from "../src/decisions/engine";
 
 async function setup() {
@@ -242,5 +242,58 @@ describe("repositories", () => {
     expect(replay?.decisionStatus).toBe("PASS");
     expect(replay?.inputs).toBeNull();
     expect(replay?.inputsError).toBeTruthy();
+  });
+
+  it("lists token cases by case_status, stage, and optional mint", async () => {
+    const client = await setup();
+    const now = Date.now();
+
+    await createTokenCase(client, {
+      mint: "MintA",
+      firstSeenAt: now,
+      stage: "PLUS_10",
+      caseStatus: "OPEN",
+    });
+    await createTokenCase(client, {
+      mint: "MintB",
+      firstSeenAt: now + 1,
+      stage: "PLUS_10",
+      caseStatus: "CLOSED",
+    });
+    await createTokenCase(client, {
+      mint: "MintA",
+      firstSeenAt: now + 2,
+      stage: "PLUS_5",
+      caseStatus: "OPEN",
+    });
+
+    const open = await listTokenCases(client, { caseStatus: "OPEN" });
+    expect(open.map((row) => row.mint)).toEqual(["MintA", "MintA"]);
+
+    const plus10 = await listTokenCases(client, { stage: "PLUS_10" });
+    expect(plus10.map((row) => row.mint)).toEqual(["MintA", "MintB"]);
+
+    const openPlus10 = await listTokenCases(client, {
+      caseStatus: "OPEN",
+      stage: "PLUS_10",
+    });
+    expect(openPlus10).toHaveLength(1);
+    expect(openPlus10[0]?.mint).toBe("MintA");
+
+    const mintA = await listTokenCases(client, { mint: "MintA" });
+    expect(mintA).toHaveLength(2);
+
+    const mintAOpenPlus10 = await listTokenCases(client, {
+      caseStatus: "OPEN",
+      stage: "PLUS_10",
+      mint: "MintA",
+    });
+    expect(mintAOpenPlus10).toHaveLength(1);
+
+    const none = await listTokenCases(client, { mint: "MintZ" });
+    expect(none).toEqual([]);
+
+    const all = await listTokenCases(client);
+    expect(all).toHaveLength(3);
   });
 });

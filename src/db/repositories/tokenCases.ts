@@ -105,6 +105,40 @@ export async function getTokenCase(
   return row ? mapTokenCaseRow(row) : null;
 }
 
+export type ListTokenCasesFilter = {
+  caseStatus?: CaseStatus;
+  stage?: LifecycleStage;
+  mint?: string;
+};
+
+export async function listTokenCases(
+  client: Client,
+  filter: ListTokenCasesFilter = {},
+): Promise<TokenCaseRow[]> {
+  const clauses: string[] = [];
+  const args: Array<string> = [];
+
+  if (filter.caseStatus != null) {
+    clauses.push("case_status = ?");
+    args.push(filter.caseStatus);
+  }
+  if (filter.stage != null) {
+    clauses.push("stage = ?");
+    args.push(filter.stage);
+  }
+  if (filter.mint != null && filter.mint !== "") {
+    clauses.push("mint = ?");
+    args.push(filter.mint);
+  }
+
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const result = await client.execute({
+    sql: `SELECT * FROM token_cases ${where} ORDER BY id`,
+    args,
+  });
+  return result.rows.map(mapTokenCaseRow);
+}
+
 export async function getCaseSummary(
   client: Client,
   tokenCaseId: number,
