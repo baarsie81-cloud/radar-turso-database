@@ -1,0 +1,24 @@
+{
+  "name": "radar-turso-database",
+  "version": "2.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Turso-first Moonshot Radar 2.4 core: token lifecycle snapshots, reproducible decisions, audit-only social calls.",
+  "scripts": {
+    "migrate": "tsx src/db/migrate.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.15.15"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
