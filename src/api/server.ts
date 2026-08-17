@@ -4,7 +4,9 @@ import { createApiApp } from "./app";
 
 async function main(): Promise<void> {
   const client = await createTursoClient();
-  const app = createApiApp(client);
+  const app = createApiApp(client, {
+    radarApiSecret: process.env.RADAR_API_SECRET,
+  });
   const port = Number(process.env.PORT) || 8787;
 
   serve({ fetch: app.fetch, port }, (info) => {

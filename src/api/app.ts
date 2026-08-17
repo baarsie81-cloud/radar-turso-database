@@ -1,6 +1,13 @@
 import { Hono } from "hono";
 import type { Client } from "@libsql/client";
 import { getDecisionReplay } from "../db/repositories/decisions";
+import {
+  createPushDelivery,
+  deletePushSubscription,
+  getPushSubscriptions,
+  hasPushDelivery,
+  upsertPushSubscription,
+} from "../db/repositories/push";
 import { getCaseSummary, listCaseSummaries } from "../db/repositories/tokenCases";
 import {
   LIFECYCLE_STAGES,
@@ -9,6 +16,10 @@ import {
   type LifecycleStage,
   type SnapshotStage,
 } from "../domain/types";
+
+export type ApiAppOptions = {
+  radarApiSecret?: string;
+};
 
 const CASE_STATUSES: readonly CaseStatus[] = ["OPEN", "CLOSED"];
 
@@ -31,8 +42,38 @@ function parseCaseId(value: string): number | null {
   return Number(value);
 }
 
-export function createApiApp(client: Client): Hono {
+function isAuthorized(header: string | undefined, secret: string | undefined): boolean {
+  return Boolean(secret && header === `Bearer ${secret}`);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function readSubscriptionBody(value: unknown): {
+  endpoint: string;
+  p256dh?: string;
+  auth?: string;
+  userAgent: string | null;
+} | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  if (!isNonEmptyString(row.endpoint)) {
+    return null;
+  }
+  return {
+    endpoint: row.endpoint,
+    p256dh: isNonEmptyString(row.p256dh) ? row.p256dh : undefined,
+    auth: isNonEmptyString(row.auth) ? row.auth : undefined,
+    userAgent: typeof row.userAgent === "string" ? row.userAgent : null,
+  };
+}
+
+export function createApiApp(client: Client, options: ApiAppOptions = {}): Hono {
   const app = new Hono();
+  const radarApiSecret = options.radarApiSecret;
 
   app.get("/health", (c) => c.json({ ok: true }));
 
@@ -90,6 +131,103 @@ export function createApiApp(client: Client): Hono {
       return c.json({ error: "Decision not found" }, 404);
     }
     return c.json(replay);
+  });
+
+  app.put("/push/subscriptions", async (c) => {
+    if (!isAuthorized(c.req.header("authorization"), radarApiSecret)) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid subscription" }, 400);
+    }
+
+    const parsed = readSubscriptionBody(body);
+    if (!parsed || parsed.p256dh == null || parsed.auth == null) {
+      return c.json({ error: "Invalid subscription" }, 400);
+    }
+
+    const subscription = await upsertPushSubscription(client, {
+      endpoint: parsed.endpoint,
+      p256dh: parsed.p256dh,
+      auth: parsed.auth,
+      userAgent: parsed.userAgent,
+    });
+    return c.json(subscription);
+  });
+
+  app.get("/push/subscriptions", async (c) => {
+    if (!isAuthorized(c.req.header("authorization"), radarApiSecret)) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    return c.json(await getPushSubscriptions(client));
+  });
+
+  app.delete("/push/subscriptions", async (c) => {
+    if (!isAuthorized(c.req.header("authorization"), radarApiSecret)) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid subscription" }, 400);
+    }
+
+    const parsed = readSubscriptionBody(body);
+    if (!parsed) {
+      return c.json({ error: "Invalid subscription" }, 400);
+    }
+
+    const deleted = await deletePushSubscription(client, parsed.endpoint);
+    if (!deleted) {
+      return c.json({ error: "Subscription not found" }, 404);
+    }
+    return c.json({ ok: true });
+  });
+
+  app.get("/push/deliveries/:decisionId", async (c) => {
+    if (!isAuthorized(c.req.header("authorization"), radarApiSecret)) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    const decisionId = parseCaseId(c.req.param("decisionId"));
+    if (decisionId == null) {
+      return c.json({ error: "Invalid decision id" }, 400);
+    }
+    return c.json({ delivered: await hasPushDelivery(client, decisionId) });
+  });
+
+  app.put("/push/deliveries", async (c) => {
+    if (!isAuthorized(c.req.header("authorization"), radarApiSecret)) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid delivery" }, 400);
+    }
+    if (!body || typeof body !== "object") {
+      return c.json({ error: "Invalid delivery" }, 400);
+    }
+    const row = body as Record<string, unknown>;
+    const decisionId = typeof row.decisionId === "number" && Number.isInteger(row.decisionId) && row.decisionId >= 1
+      ? row.decisionId
+      : null;
+    const tokenCaseId = typeof row.tokenCaseId === "number" && Number.isInteger(row.tokenCaseId) && row.tokenCaseId >= 1
+      ? row.tokenCaseId
+      : null;
+    if (decisionId == null || tokenCaseId == null) {
+      return c.json({ error: "Invalid delivery" }, 400);
+    }
+
+    const delivery = await createPushDelivery(client, { decisionId, tokenCaseId });
+    return c.json(delivery);
   });
 
   return app;

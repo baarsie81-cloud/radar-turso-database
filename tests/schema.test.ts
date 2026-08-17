@@ -131,4 +131,62 @@ describe("0001_init schema", () => {
       client.execute("UPDATE token_cases SET outcome_label = 'FAILED' WHERE id = 1"),
     ).rejects.toThrow();
   });
+
+  it("adds push subscription and delivery tables", async () => {
+    const client = await createTursoClient({ url: ":memory:" });
+    const ran = await migrate(client);
+    expect(ran).toContain("0003_push");
+
+    const now = Date.now();
+    await client.execute({
+      sql: `
+        INSERT INTO token_cases (
+          mint, first_seen_at, stage, case_status, created_at, updated_at
+        ) VALUES (?, ?, 'PLUS_10', 'OPEN', ?, ?)
+      `,
+      args: ["SoMint", now, now, now],
+    });
+    await client.execute({
+      sql: `
+        INSERT INTO decisions (
+          token_case_id, decision_stage, decided_at, decision_status, radar_version, inputs_json
+        ) VALUES (1, 'PLUS_10', ?, 'PASS', '2.4', ?)
+      `,
+      args: [now, JSON.stringify({ plus10RoiPct: 30 })],
+    });
+
+    await client.execute({
+      sql: `
+        INSERT INTO push_subscriptions (endpoint, p256dh, auth, created_at, updated_at)
+        VALUES ('https://push.example/a', 'p256', 'auth', ?, ?)
+      `,
+      args: [now, now],
+    });
+    await expect(
+      client.execute({
+        sql: `
+          INSERT INTO push_subscriptions (endpoint, p256dh, auth, created_at, updated_at)
+          VALUES ('https://push.example/a', 'other', 'auth', ?, ?)
+        `,
+        args: [now, now],
+      }),
+    ).rejects.toThrow();
+
+    await client.execute({
+      sql: `
+        INSERT INTO push_deliveries (decision_id, token_case_id, sent_at)
+        VALUES (1, 1, ?)
+      `,
+      args: [now],
+    });
+    await expect(
+      client.execute({
+        sql: `
+          INSERT INTO push_deliveries (decision_id, token_case_id, sent_at)
+          VALUES (1, 1, ?)
+        `,
+        args: [now],
+      }),
+    ).rejects.toThrow();
+  });
 });
