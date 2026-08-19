@@ -167,6 +167,28 @@ export async function createTokenCase(
   return mapTokenCaseRow(row);
 }
 
+export async function updateTokenCaseStage(
+  client: Client,
+  tokenCaseId: number,
+  stage: LifecycleStage,
+  updatedAt: number = Date.now(),
+): Promise<TokenCaseRow> {
+  const result = await client.execute({
+    sql: `
+      UPDATE token_cases SET stage = ?, updated_at = ?
+      WHERE id = ?
+      RETURNING *
+    `,
+    args: [stage, updatedAt, tokenCaseId],
+  });
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Token case not found");
+  }
+  return mapTokenCaseRow(row);
+}
+
 export async function getTokenCase(
   client: Client,
   id: number,

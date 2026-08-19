@@ -267,14 +267,14 @@ describe("repositories", () => {
       caseStatus: "CLOSED",
     });
     await createTokenCase(client, {
-      mint: "MintA",
+      mint: "MintC",
       firstSeenAt: now + 2,
       stage: "PLUS_5",
       caseStatus: "OPEN",
     });
 
     const open = await listTokenCases(client, { caseStatus: "OPEN" });
-    expect(open.map((row) => row.mint)).toEqual(["MintA", "MintA"]);
+    expect(open.map((row) => row.mint)).toEqual(["MintA", "MintC"]);
 
     const plus10 = await listTokenCases(client, { stage: "PLUS_10" });
     expect(plus10.map((row) => row.mint)).toEqual(["MintA", "MintB"]);
@@ -287,7 +287,7 @@ describe("repositories", () => {
     expect(openPlus10[0]?.mint).toBe("MintA");
 
     const mintA = await listTokenCases(client, { mint: "MintA" });
-    expect(mintA).toHaveLength(2);
+    expect(mintA).toHaveLength(1);
 
     const mintAOpenPlus10 = await listTokenCases(client, {
       caseStatus: "OPEN",
