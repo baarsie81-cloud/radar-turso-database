@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
+/**
+ * Moonshot Radar V24 — Next.js App Router.
+ * Server Components and route handlers import Turso modules under src/.
+ * No Neon. Migrations are CLI-only (npm run migrate), never on request.
+ */
 const nextConfig: NextConfig = {
-  // Backend core under src/ is imported by App Router route handlers.
+  // Keep Node.js runtime defaults for @libsql/client in Server Components / routes.
 };
 
 export default nextConfig;
