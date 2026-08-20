@@ -1,0 +1,69 @@
+import { createTursoClient } from "../../src/db/client";
+import { listCaseSummaries } from "../../src/db/repositories/tokenCases";
+import { RADAR_VERSION } from "../../src/domain/types";
+import { RadarCaseList } from "../../components/radar-case-list";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+type LoadResult =
+  | { ok: true; summaries: Awaited<ReturnType<typeof listCaseSummaries>> }
+  | { ok: false; error: string };
+
+async function loadCaseSummaries(): Promise<LoadResult> {
+  if (!process.env.TURSO_DATABASE_URL) {
+    return {
+      ok: false,
+      error: "Turso is not configured. Set TURSO_DATABASE_URL.",
+    };
+  }
+
+  try {
+    const client = await createTursoClient();
+    try {
+      const summaries = await listCaseSummaries(client);
+      return { ok: true, summaries };
+    } finally {
+      client.close();
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      error: `Turso unavailable: ${message}`,
+    };
+  }
+}
+
+export default async function RadarPage() {
+  const result = await loadCaseSummaries();
+
+  return (
+    <main style={{ padding: "1.5rem", fontFamily: "system-ui, sans-serif" }}>
+      <header style={{ marginBottom: "0.5rem" }}>
+        <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
+          Moonshot Radar {RADAR_VERSION} · Turso
+        </p>
+        <h1 style={{ margin: "0.25rem 0 0", fontSize: "1.75rem" }}>Radar</h1>
+      </header>
+
+      {!result.ok ? (
+        <p
+          role="alert"
+          style={{
+            marginTop: "1.5rem",
+            padding: "0.75rem 1rem",
+            background: "#f8f8f8",
+            border: "1px solid #ddd",
+            borderRadius: "4px",
+            color: "#333",
+          }}
+        >
+          {result.error}
+        </p>
+      ) : (
+        <RadarCaseList summaries={result.summaries} />
+      )}
+    </main>
+  );
+}
