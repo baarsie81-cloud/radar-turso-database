@@ -189,6 +189,14 @@ export async function updateTokenCaseStage(
   return mapTokenCaseRow(row);
 }
 
+export async function getOpenTokenCaseByMint(
+  client: Client,
+  mint: string,
+): Promise<TokenCaseRow | null> {
+  const rows = await listTokenCases(client, { mint, caseStatus: "OPEN" });
+  return rows[0] ?? null;
+}
+
 export async function getTokenCase(
   client: Client,
   id: number,
