@@ -159,6 +159,26 @@ export async function getDueJobs(
   return result.rows.map(mapSnapshotJobRow);
 }
 
+/** PENDING jobs whose measurement window has already closed. */
+export async function getExpiredPendingJobs(
+  client: Client,
+  now: number,
+  limit = 500,
+): Promise<SnapshotJobRow[]> {
+  const safeLimit = Math.max(1, Math.min(2000, Math.floor(limit)));
+  const result = await client.execute({
+    sql: `
+      SELECT * FROM snapshot_jobs
+      WHERE status = 'PENDING'
+        AND deadline_at < ?
+      ORDER BY deadline_at ASC, id ASC
+      LIMIT ?
+    `,
+    args: [now, safeLimit],
+  });
+  return result.rows.map(mapSnapshotJobRow);
+}
+
 export async function claimJob(
   client: Client,
   jobId: number,

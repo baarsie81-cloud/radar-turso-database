@@ -2,6 +2,7 @@ import type { Client, Row } from "@libsql/client";
 import { num, numOrNull, str } from "../map";
 
 export const DEFAULT_COLLECTION_LOCK_KEY = "v24-collect";
+export const LIFECYCLE_LOCK_KEY = "v24-lifecycle";
 
 export type CollectionLockRow = {
   jobKey: string;
