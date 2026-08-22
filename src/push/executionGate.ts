@@ -43,6 +43,8 @@ async function fetchQuote(
   url.searchParams.set("outputMint", outputMint);
   url.searchParams.set("amount", amount);
   url.searchParams.set("slippageBps", String(slippageBps));
+  url.searchParams.set("instructionVersion", "V2");
+  url.searchParams.set("restrictIntermediateTokens", "false");
 
   const response = await fetchFn(url, {
     method: "GET",
