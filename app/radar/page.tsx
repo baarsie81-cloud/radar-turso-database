@@ -1,6 +1,7 @@
 import { createTursoClient } from "../../src/db/client";
 import { listCaseSummaries } from "../../src/db/repositories/tokenCases";
 import { RADAR_VERSION } from "../../src/domain/types";
+import { PushSettings } from "../../components/push-settings";
 import { RadarCaseList } from "../../components/radar-case-list";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +47,8 @@ export default async function RadarPage() {
         </p>
         <h1 style={{ margin: "0.25rem 0 0", fontSize: "1.75rem" }}>Radar</h1>
       </header>
+
+      <PushSettings />
 
       {!result.ok ? (
         <p
