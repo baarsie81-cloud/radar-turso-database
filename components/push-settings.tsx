@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   browserSubscriptionToPayload,
   isPushSupported,
-  statusFromNotificationPermission,
+  resolveInitialPushStatus,
   urlBase64ToUint8Array,
   type PushUiStatus,
 } from "../src/push/browserSubscribe";
@@ -13,7 +13,7 @@ const STATUS_LABEL: Record<PushUiStatus, string> = {
   unsupported: "Notifications not supported in this browser",
   idle: "Notifications not enabled",
   denied: "Permission denied",
-  enabled: "Enabled",
+  enabled: "Notifications enabled",
   error: "Error",
   loading: "Working…",
 };
@@ -23,24 +23,65 @@ type Props = {
   fetchFn?: typeof fetch;
 };
 
+async function detectExistingSubscription(): Promise<{
+  supported: boolean;
+  permission: NotificationPermission | "unsupported";
+  hasSubscription: boolean;
+}> {
+  if (
+    !isPushSupported(
+      typeof navigator !== "undefined" ? navigator.serviceWorker : undefined,
+      typeof window !== "undefined" ? window.PushManager : undefined,
+      typeof window !== "undefined" ? window.Notification : undefined,
+    )
+  ) {
+    return {
+      supported: false,
+      permission: "unsupported",
+      hasSubscription: false,
+    };
+  }
+
+  const permission = Notification.permission;
+  if (permission === "denied") {
+    return { supported: true, permission, hasSubscription: false };
+  }
+
+  let hasSubscription = false;
+  try {
+    const registration =
+      (await navigator.serviceWorker.getRegistration())
+      ?? (await navigator.serviceWorker.getRegistration("/"));
+    if (registration) {
+      const existing = await registration.pushManager.getSubscription();
+      hasSubscription = existing != null;
+    }
+  } catch {
+    hasSubscription = false;
+  }
+
+  return { supported: true, permission, hasSubscription };
+}
+
 /** Browser opt-in for V24 push — stores subscription only; does not send. */
 export function PushSettings({ fetchFn = fetch }: Props) {
-  const [status, setStatus] = useState<PushUiStatus>("idle");
+  const [status, setStatus] = useState<PushUiStatus>("loading");
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (
-      !isPushSupported(
-        typeof navigator !== "undefined" ? navigator.serviceWorker : undefined,
-        typeof window !== "undefined" ? window.PushManager : undefined,
-        typeof window !== "undefined" ? window.Notification : undefined,
-      )
-    ) {
-      setStatus("unsupported");
-      return;
-    }
+    let cancelled = false;
 
-    setStatus(statusFromNotificationPermission(Notification.permission));
+    void (async () => {
+      const detected = await detectExistingSubscription();
+      if (cancelled) {
+        return;
+      }
+      setStatus(resolveInitialPushStatus(detected));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const enableNotifications = useCallback(async () => {
@@ -72,6 +113,21 @@ export function PushSettings({ fetchFn = fetch }: Props) {
 
       const registration = await navigator.serviceWorker.register("/sw.js");
       await navigator.serviceWorker.ready;
+
+      const existing = await registration.pushManager.getSubscription();
+      if (existing) {
+        const existingPayload = browserSubscriptionToPayload(existing.toJSON());
+        if (existingPayload) {
+          await fetchFn("/api/push/subscribe", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(existingPayload),
+          });
+        }
+        setStatus("enabled");
+        setMessage(null);
+        return;
+      }
 
       const keyResponse = await fetchFn("/api/push/public-key");
       if (!keyResponse.ok) {
@@ -148,23 +204,25 @@ export function PushSettings({ fetchFn = fetch }: Props) {
         </p>
       ) : null}
 
-      {status !== "unsupported" && status !== "enabled" && status !== "denied" ? (
+      {status !== "unsupported"
+        && status !== "enabled"
+        && status !== "denied"
+        && status !== "loading" ? (
         <button
           type="button"
           onClick={() => {
             void enableNotifications();
           }}
-          disabled={status === "loading"}
           style={{
             padding: "0.4rem 0.75rem",
             fontSize: "0.85rem",
             border: "1px solid #bbb",
             borderRadius: "3px",
             background: "#fff",
-            cursor: status === "loading" ? "default" : "pointer",
+            cursor: "pointer",
           }}
         >
-          {status === "loading" ? "Enabling…" : "Enable notifications"}
+          Enable notifications
         </button>
       ) : null}
     </section>

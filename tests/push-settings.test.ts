@@ -4,6 +4,7 @@ import { readVapidPublicKey } from "../src/push/publicKey";
 import {
   browserSubscriptionToPayload,
   isPushSupported,
+  resolveInitialPushStatus,
   statusFromNotificationPermission,
   urlBase64ToUint8Array,
 } from "../src/push/browserSubscribe";
@@ -55,9 +56,53 @@ describe("browser subscribe permission + payload", () => {
     expect(statusFromNotificationPermission("granted")).toBe("idle");
   });
 
+  it("existing subscription shows enabled", () => {
+    expect(
+      resolveInitialPushStatus({
+        supported: true,
+        permission: "granted",
+        hasSubscription: true,
+      }),
+    ).toBe("enabled");
+  });
+
+  it("no subscription stays idle even when permission granted", () => {
+    expect(
+      resolveInitialPushStatus({
+        supported: true,
+        permission: "granted",
+        hasSubscription: false,
+      }),
+    ).toBe("idle");
+    expect(
+      resolveInitialPushStatus({
+        supported: true,
+        permission: "default",
+        hasSubscription: false,
+      }),
+    ).toBe("idle");
+  });
+
+  it("denied permission wins over subscription", () => {
+    expect(
+      resolveInitialPushStatus({
+        supported: true,
+        permission: "denied",
+        hasSubscription: true,
+      }),
+    ).toBe("denied");
+  });
+
   it("detects unsupported environments", () => {
     expect(isPushSupported(undefined, undefined, undefined)).toBe(false);
     expect(isPushSupported({}, {}, {})).toBe(true);
+    expect(
+      resolveInitialPushStatus({
+        supported: false,
+        permission: "unsupported",
+        hasSubscription: false,
+      }),
+    ).toBe("unsupported");
   });
 
   it("builds subscribe payload from PushSubscription JSON", () => {

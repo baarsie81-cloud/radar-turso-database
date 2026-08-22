@@ -8,6 +8,7 @@ export { readVapidPublicKey } from "./publicKey";
 export {
   browserSubscriptionToPayload,
   isPushSupported,
+  resolveInitialPushStatus,
   statusFromNotificationPermission,
   urlBase64ToUint8Array,
 } from "./browserSubscribe";

@@ -34,6 +34,26 @@ export function statusFromNotificationPermission(
 }
 
 /**
+ * Resolve initial push UI status from permission + existing subscription.
+ */
+export function resolveInitialPushStatus(input: {
+  supported: boolean;
+  permission: NotificationPermission | "unsupported";
+  hasSubscription: boolean;
+}): Exclude<PushUiStatus, "loading" | "error"> {
+  if (!input.supported || input.permission === "unsupported") {
+    return "unsupported";
+  }
+  if (input.permission === "denied") {
+    return "denied";
+  }
+  if (input.hasSubscription && input.permission === "granted") {
+    return "enabled";
+  }
+  return "idle";
+}
+
+/**
  * Convert a browser PushSubscription (or toJSON() result) into POST body shape.
  */
 export function browserSubscriptionToPayload(

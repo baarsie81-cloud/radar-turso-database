@@ -3,6 +3,7 @@ import { listCaseSummaries } from "../../src/db/repositories/tokenCases";
 import { RADAR_VERSION } from "../../src/domain/types";
 import { PushSettings } from "../../components/push-settings";
 import { RadarCaseList } from "../../components/radar-case-list";
+import { RadarRefreshBar } from "../../components/radar-refresh";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -37,6 +38,7 @@ async function loadCaseSummaries(): Promise<LoadResult> {
 }
 
 export default async function RadarPage() {
+  const fetchedAt = Date.now();
   const result = await loadCaseSummaries();
 
   return (
@@ -46,6 +48,7 @@ export default async function RadarPage() {
           Moonshot Radar {RADAR_VERSION} · Turso
         </p>
         <h1 style={{ margin: "0.25rem 0 0", fontSize: "1.75rem" }}>Radar</h1>
+        <RadarRefreshBar fetchedAt={fetchedAt} />
       </header>
 
       <PushSettings />
