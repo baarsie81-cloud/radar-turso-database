@@ -42,6 +42,16 @@ async function seedCase(
   });
 }
 
+function executionOk() {
+  return Promise.resolve({
+    ok: true,
+    reason: null,
+    buyOutAmount: "1000",
+    sellOutAmount: "9900000",
+    roundTripLossPct: 1,
+  });
+}
+
 describe("V24 PASS-only push delivery", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -85,14 +95,13 @@ describe("V24 PASS-only push delivery", () => {
       inputsJson: JSON.stringify({ reject: true }),
     });
 
-    const candidates = await selectPassPushCandidates(client);
-    expect(candidates).toHaveLength(0);
-
     const sendPush = vi.fn(async (_payload: PushPayload) => undefined);
-    const summary = await processPushDeliveries({ client, sendPush });
+    const validateExecution = vi.fn(executionOk);
+    const summary = await processPushDeliveries({ client, sendPush, validateExecution });
     expect(summary.candidates).toBe(0);
     expect(summary.delivered).toBe(0);
     expect(sendPush).not.toHaveBeenCalled();
+    expect(validateExecution).not.toHaveBeenCalled();
   });
 
   it("duplicate delivery is ignored", async () => {
@@ -114,14 +123,13 @@ describe("V24 PASS-only push delivery", () => {
       sentAt: BASE + 700_000,
     });
 
-    const candidates = await selectPassPushCandidates(client);
-    expect(candidates).toHaveLength(0);
-
     const sendPush = vi.fn(async (_payload: PushPayload) => undefined);
-    const summary = await processPushDeliveries({ client, sendPush });
+    const validateExecution = vi.fn(executionOk);
+    const summary = await processPushDeliveries({ client, sendPush, validateExecution });
     expect(summary.candidates).toBe(0);
     expect(summary.delivered).toBe(0);
     expect(sendPush).not.toHaveBeenCalled();
+    expect(validateExecution).not.toHaveBeenCalled();
     expect(await hasPushDelivery(client, decision.id)).toBe(true);
   });
 
@@ -150,11 +158,9 @@ describe("V24 PASS-only push delivery", () => {
     expect(payload.body).toContain("PASS");
     expect(payload.body).toContain("35.50%");
     expect(payload.body).toContain("12.25%");
-    expect(payload.decisionStatus).toBe("PASS");
-    expect(payload.decisionStage).toBe("PLUS_10");
   });
 
-  it("processPushDeliveries sends once and marks delivered", async () => {
+  it("sends actionable PASS once after executable route validation", async () => {
     const client = await setup();
     const tokenCase = await seedCase(client);
     const decision = await storeDecision(client, {
@@ -167,28 +173,87 @@ describe("V24 PASS-only push delivery", () => {
       inputsJson: JSON.stringify({ plus10RoiPct: 30 }),
     });
 
-    const sent: PushPayload[] = [];
-    const sendPush = vi.fn(async (payload: PushPayload) => {
-      sent.push(payload);
-    });
+    const sendPush = vi.fn(async (_payload: PushPayload) => undefined);
+    const validateExecution = vi.fn(executionOk);
 
     const first = await processPushDeliveries({
       client,
       sendPush,
+      validateExecution,
       now: () => BASE + 800_000,
     });
     expect(first.candidates).toBe(1);
     expect(first.delivered).toBe(1);
     expect(first.errors).toHaveLength(0);
+    expect(validateExecution).toHaveBeenCalledWith(MINT);
     expect(sendPush).toHaveBeenCalledOnce();
-    expect(sent[0]?.mint).toBe(MINT);
-    expect(sent[0]?.url).toBe(`/cases/${tokenCase.id}`);
     expect(await hasPushDelivery(client, decision.id)).toBe(true);
 
-    const second = await processPushDeliveries({ client, sendPush });
+    const second = await processPushDeliveries({ client, sendPush, validateExecution });
     expect(second.candidates).toBe(0);
     expect(second.delivered).toBe(0);
     expect(sendPush).toHaveBeenCalledOnce();
+  });
+
+  it("blocks PASS push when Jupiter has no executable sell route", async () => {
+    const client = await setup();
+    const tokenCase = await seedCase(client);
+    const decision = await storeDecision(client, {
+      tokenCaseId: tokenCase.id,
+      decisionStage: "PLUS_10",
+      decidedAt: BASE + 600_000,
+      decisionStatus: "PASS",
+      plus10RoiPct: 40,
+      momentum5To10Pct: 15,
+      inputsJson: JSON.stringify({ plus10RoiPct: 40 }),
+    });
+
+    const sendPush = vi.fn(async (_payload: PushPayload) => undefined);
+    const validateExecution = vi.fn(async () => ({
+      ok: false,
+      reason: "EXECUTION_FAIL_NO_SELL_ROUTE",
+      buyOutAmount: "1000",
+      sellOutAmount: null,
+      roundTripLossPct: null,
+    }));
+
+    const summary = await processPushDeliveries({ client, sendPush, validateExecution });
+    expect(summary.candidates).toBe(1);
+    expect(summary.delivered).toBe(0);
+    expect(summary.skipped).toBe(1);
+    expect(summary.errors).toEqual([
+      { decisionId: decision.id, message: "EXECUTION_FAIL_NO_SELL_ROUTE" },
+    ]);
+    expect(sendPush).not.toHaveBeenCalled();
+    expect(await hasPushDelivery(client, decision.id)).toBe(false);
+  });
+
+  it("fails closed when execution provider errors", async () => {
+    const client = await setup();
+    const tokenCase = await seedCase(client);
+    await storeDecision(client, {
+      tokenCaseId: tokenCase.id,
+      decisionStage: "PLUS_10",
+      decidedAt: BASE + 600_000,
+      decisionStatus: "PASS",
+      plus10RoiPct: 30,
+      momentum5To10Pct: 10,
+      inputsJson: JSON.stringify({ plus10RoiPct: 30 }),
+    });
+
+    const sendPush = vi.fn(async (_payload: PushPayload) => undefined);
+    const validateExecution = vi.fn(async () => ({
+      ok: false,
+      reason: "EXECUTION_FAIL_PROVIDER:timeout",
+      buyOutAmount: null,
+      sellOutAmount: null,
+      roundTripLossPct: null,
+    }));
+
+    const summary = await processPushDeliveries({ client, sendPush, validateExecution });
+    expect(summary.delivered).toBe(0);
+    expect(summary.skipped).toBe(1);
+    expect(sendPush).not.toHaveBeenCalled();
   });
 
   it("push layer does not call evaluateRadar24", async () => {
@@ -206,9 +271,9 @@ describe("V24 PASS-only push delivery", () => {
 
     const evaluateSpy = vi.spyOn(engine, "evaluateRadar24");
     const sendPush = vi.fn(async (_payload: PushPayload) => undefined);
+    const validateExecution = vi.fn(executionOk);
 
-    await selectPassPushCandidates(client);
-    await processPushDeliveries({ client, sendPush });
+    await processPushDeliveries({ client, sendPush, validateExecution });
 
     expect(evaluateSpy).not.toHaveBeenCalled();
     expect(sendPush).toHaveBeenCalledOnce();
