@@ -21,7 +21,7 @@ export type ProcessPushWithWebPushDeps = {
 
 /**
  * Connect PASS delivery tracking to the real Web Push transport.
- * Still requires an explicit caller — not enabled via cron/route yet.
+ * Called by the push cron when RADAR24_PUSH_ENABLED === "true".
  */
 export async function processPushDeliveriesWithWebPush(
   deps: ProcessPushWithWebPushDeps,
