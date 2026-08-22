@@ -3,14 +3,7 @@ import type { CaseSummary } from "../src/db/repositories/tokenCases";
 import type { DecisionRow } from "../src/db/repositories/decisions";
 import type { SnapshotRow } from "../src/db/repositories/snapshots";
 import { SNAPSHOT_STAGES, type SnapshotStage } from "../src/domain/types";
-
-function displayName(summary: CaseSummary): string {
-  const { symbol, name } = summary.tokenCase;
-  if (symbol && name && symbol !== name) {
-    return `${symbol} · ${name}`;
-  }
-  return symbol ?? name ?? "—";
-}
+import { MintAddressField } from "./mint-address-field";
 
 function formatPct(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) {
@@ -106,15 +99,40 @@ export function CaseDetailView({ summary }: Props) {
 
   return (
     <div style={{ marginTop: "1.5rem", maxWidth: "52rem" }}>
-      <section style={{ marginBottom: "1.75rem" }}>
-        <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.75rem" }}>Token</h2>
+      <p
+        data-testid="observation-mode"
+        style={{
+          display: "inline-block",
+          margin: "0 0 1.25rem",
+          padding: "0.25rem 0.55rem",
+          fontSize: "0.8rem",
+          color: "#444",
+          background: "#f0f0f0",
+          border: "1px solid #ccc",
+          borderRadius: "3px",
+        }}
+      >
+        Observation mode
+      </p>
+
+      <section
+        data-testid="token-information"
+        style={{ marginBottom: "1.75rem" }}
+      >
+        <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.75rem" }}>
+          Token information
+        </h2>
         <dl style={dlStyle}>
-          <Dt>ID</Dt>
+          <Dt>Token name</Dt>
+          <Dd>{tokenCase.name ?? "—"}</Dd>
+          <Dt>Symbol</Dt>
+          <Dd>{tokenCase.symbol ?? "—"}</Dd>
+          <Dt>Mint Address</Dt>
+          <Dd>
+            <MintAddressField mint={tokenCase.mint} />
+          </Dd>
+          <Dt>Case ID</Dt>
           <Dd>{tokenCase.id}</Dd>
-          <Dt>Mint</Dt>
-          <Dd mono>{tokenCase.mint}</Dd>
-          <Dt>Name</Dt>
-          <Dd>{displayName(summary)}</Dd>
           <Dt>Entry price</Dt>
           <Dd>{formatPrice(tokenCase.entryPrice)}</Dd>
           <Dt>Entry valid</Dt>
@@ -140,9 +158,12 @@ export function CaseDetailView({ summary }: Props) {
         </dl>
       </section>
 
-      <section style={{ marginBottom: "1.75rem" }}>
+      <section
+        data-testid="decision-section"
+        style={{ marginBottom: "1.75rem" }}
+      >
         <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.5rem" }}>
-          Decision replay
+          Decision
         </h2>
         <p style={{ margin: "0 0 0.75rem", color: "#555", fontSize: "0.9rem" }}>
           Stored decisions only — no recalculation.
@@ -159,7 +180,7 @@ export function CaseDetailView({ summary }: Props) {
           <p style={{ color: "#555", margin: 0 }}>No decision recorded yet.</p>
         ) : (
           decisions.map((decision) => (
-            <DecisionReplayBlock key={decision.id} decision={decision} />
+            <DecisionBlock key={decision.id} decision={decision} />
           ))
         )}
       </section>
@@ -267,7 +288,7 @@ export function CaseDetailView({ summary }: Props) {
   );
 }
 
-function DecisionReplayBlock({ decision }: { decision: DecisionRow }) {
+function DecisionBlock({ decision }: { decision: DecisionRow }) {
   const parsed = parseStoredInputs(decision.inputsJson);
   const inputsRecord =
     parsed.inputs != null
@@ -278,6 +299,7 @@ function DecisionReplayBlock({ decision }: { decision: DecisionRow }) {
 
   return (
     <article
+      data-testid="decision-block"
       style={{
         marginBottom: "1.25rem",
         padding: "0.85rem 1rem",
@@ -293,20 +315,28 @@ function DecisionReplayBlock({ decision }: { decision: DecisionRow }) {
       </h3>
 
       <dl style={dlStyle}>
+        <Dt>Decision status</Dt>
+        <Dd>{decision.decisionStatus}</Dd>
+        <Dt>Decision stage</Dt>
+        <Dd>{decision.decisionStage}</Dd>
         <Dt>Radar version</Dt>
         <Dd>{decision.radarVersion}</Dd>
+        <Dt>Decided timestamp</Dt>
+        <Dd>{formatTime(decision.decidedAt)}</Dd>
         <Dt>Entry price</Dt>
         <Dd>{formatPrice(decision.entryPrice)}</Dd>
-        <Dt>+5 ROI</Dt>
+        <Dt>Plus5 ROI</Dt>
         <Dd>{formatPct(decision.plus5RoiPct)}</Dd>
-        <Dt>+10 ROI</Dt>
+        <Dt>Plus10 ROI</Dt>
         <Dd>{formatPct(decision.plus10RoiPct)}</Dd>
-        <Dt>Momentum 5→10</Dt>
+        <Dt>Momentum</Dt>
         <Dd>{formatPct(decision.momentum5To10Pct)}</Dd>
-        <Dt>Reject reason</Dt>
-        <Dd>{decision.rejectReason ?? "—"}</Dd>
-        <Dt>Decision timestamp</Dt>
-        <Dd>{formatTime(decision.decidedAt)}</Dd>
+        {decision.rejectReason != null ? (
+          <>
+            <Dt>Reject reason</Dt>
+            <Dd>{decision.rejectReason}</Dd>
+          </>
+        ) : null}
       </dl>
 
       <h4
