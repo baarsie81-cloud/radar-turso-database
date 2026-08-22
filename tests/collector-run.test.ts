@@ -382,9 +382,11 @@ describe("runCollection", () => {
       owner: "test-runner",
       discoverTokens: async () => [tokenA, tokenB],
       fetchMarket: async () => makeMarket(0.002, jobTime),
+      maxNewCasesPerRun: 2,
       now: () => jobTime,
     });
 
+    expect(summary.offered).toBe(2);
     expect(summary.discovered).toBe(2);
     expect(summary.jobsProcessed).toBe(1); // only pre-seeded PLUS_5 is due
     expect(summary.snapshotsWritten).toBe(1);

@@ -17,6 +17,8 @@ export type DiscoveryFn = () => Promise<DiscoveredToken[]>;
 
 export type MarketFetchFn = (mint: string) => Promise<MarketSnapshotInput>;
 
+export const DEFAULT_MAX_NEW_CASES_PER_RUN = 1;
+
 export type RunCollectionDeps = {
   client: Client;
   owner: string;
@@ -26,6 +28,8 @@ export type RunCollectionDeps = {
   lockDurationMs?: number;
   /** Maximum due jobs to pull per run; defaults to 50. */
   jobLimit?: number;
+  /** Max new token_cases to create per run; defaults to V24_MAX_NEW_CASES_PER_RUN or 1. */
+  maxNewCasesPerRun?: number;
   /** Injected clock; defaults to Date.now(). */
   now?: () => number;
 };
@@ -33,6 +37,9 @@ export type RunCollectionDeps = {
 // ---- summary type -------------------------------------------------------
 
 export type CollectionSummary = {
+  /** Tokens returned by the discovery provider this run. */
+  offered: number;
+  /** New token_cases created from discovery. */
   discovered: number;
   skipped: number;
   jobsProcessed: number;
@@ -50,8 +57,27 @@ export type CollectionError = {
 
 // ---- internal helpers ---------------------------------------------------
 
+export function resolveMaxNewCasesPerRun(
+  override?: number,
+  envValue?: string,
+): number {
+  if (override != null) {
+    return override;
+  }
+  const raw = envValue ?? process.env.V24_MAX_NEW_CASES_PER_RUN;
+  if (raw == null || raw.trim() === "") {
+    return DEFAULT_MAX_NEW_CASES_PER_RUN;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_MAX_NEW_CASES_PER_RUN;
+  }
+  return parsed;
+}
+
 function emptySummary(): CollectionSummary {
   return {
+    offered: 0,
     discovered: 0,
     skipped: 0,
     jobsProcessed: 0,
@@ -74,6 +100,7 @@ export async function runCollection(
   const now = deps.now ?? (() => Date.now());
   const lockDurationMs = deps.lockDurationMs ?? 5 * 60_000;
   const jobLimit = deps.jobLimit ?? 50;
+  const maxNewCasesPerRun = resolveMaxNewCasesPerRun(deps.maxNewCasesPerRun);
   const summary = emptySummary();
 
   const startedAt = now();
@@ -106,12 +133,14 @@ export async function runCollection(
       });
     }
 
+    summary.offered = tokens.length;
+
     if (tokens.length > 0) {
       try {
         const persistResult = await persistDiscoveredTokens(
           deps.client,
           tokens,
-          { createdAt: now() },
+          { createdAt: now(), maxNewCasesPerRun },
         );
         summary.discovered += persistResult.created;
         summary.skipped += persistResult.skipped;

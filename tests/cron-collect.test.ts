@@ -17,6 +17,7 @@ function bareRequest(): Request {
 }
 
 const emptySummary: CollectionSummary = {
+  offered: 3,
   discovered: 1,
   skipped: 2,
   jobsProcessed: 3,
@@ -160,6 +161,7 @@ describe("GET /api/cron/collect", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       enabled: true,
+      offered: 3,
       discovered: 1,
       skipped: 2,
       jobsProcessed: 3,

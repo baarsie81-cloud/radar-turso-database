@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { createTursoClient } from "../src/db/client";
 import { migrate } from "../src/db/migrate";
-import { persistDiscoveredToken, persistDiscoveredTokens } from "../src/collector/discovery";
+import { persistDiscoveredToken, persistDiscoveredTokens, DISCOVERY_LIMIT_SKIP_REASON } from "../src/collector/discovery";
 import { listSnapshotsByCase } from "../src/db/repositories/snapshots";
 import { createTokenCase } from "../src/db/repositories/tokenCases";
 import type { DiscoveredToken } from "../src/providers/types";
 
 const BASE = 1_700_000_000_000;
+
+function discoveryMint(index: number): string {
+  const body = (index + 1).toString(36).toUpperCase().replace(/[^1-9A-HJ-NP-Za-km-z]/g, "X");
+  return `SoMint${body.padEnd(37, "1")}`.slice(0, 44);
+}
 
 function sampleToken(overrides: Partial<DiscoveredToken> = {}): DiscoveredToken {
   return {
@@ -145,8 +150,92 @@ describe("discovery service", () => {
       }),
     ], { createdAt: BASE });
 
+    expect(summary.offered).toBe(3);
     expect(summary.created).toBe(2);
     expect(summary.skipped).toBe(1);
     expect(summary.results.filter((row) => row.status === "created")).toHaveLength(2);
+  });
+
+  it("limit 1 creates one case from many offered tokens", async () => {
+    const client = await setup();
+    const tokens = Array.from({ length: 20 }, (_, index) =>
+      sampleToken({
+        mint: discoveryMint(index),
+        symbol: `T${index}`,
+        firstSeenAt: BASE + index,
+        sourceEventId: `pool_${index}`,
+      }),
+    );
+
+    const summary = await persistDiscoveredTokens(client, tokens, {
+      createdAt: BASE,
+      maxNewCasesPerRun: 1,
+    });
+
+    expect(summary.offered).toBe(20);
+    expect(summary.created).toBe(1);
+    expect(summary.skipped).toBe(19);
+    expect(summary.results[0]?.status).toBe("created");
+    expect(summary.results.slice(1).every(
+      (row) =>
+        row.status === "skipped"
+        && row.reason === DISCOVERY_LIMIT_SKIP_REASON,
+    )).toBe(true);
+  });
+
+  it("limit 5 creates five cases from many offered tokens", async () => {
+    const client = await setup();
+    const tokens = Array.from({ length: 12 }, (_, index) =>
+      sampleToken({
+        mint: discoveryMint(100 + index),
+        symbol: `F${index}`,
+        firstSeenAt: BASE + index,
+        sourceEventId: `pool_f_${index}`,
+      }),
+    );
+
+    const summary = await persistDiscoveredTokens(client, tokens, {
+      createdAt: BASE,
+      maxNewCasesPerRun: 5,
+    });
+
+    expect(summary.offered).toBe(12);
+    expect(summary.created).toBe(5);
+    expect(summary.skipped).toBe(7);
+  });
+
+  it("duplicate OPEN mints are skipped without consuming the new-case limit", async () => {
+    const client = await setup();
+
+    await createTokenCase(client, {
+      mint: "SoMint2222222222222222222222222222222222222",
+      firstSeenAt: BASE,
+      stage: "INITIAL",
+      caseStatus: "OPEN",
+    });
+
+    const summary = await persistDiscoveredTokens(client, [
+      sampleToken({
+        mint: "SoMint2222222222222222222222222222222222222",
+        symbol: "OLD",
+      }),
+      sampleToken({
+        mint: "SoMint3333333333333333333333333333333333333",
+        symbol: "NEW",
+      }),
+    ], {
+      createdAt: BASE,
+      maxNewCasesPerRun: 1,
+    });
+
+    expect(summary.offered).toBe(2);
+    expect(summary.created).toBe(1);
+    expect(summary.skipped).toBe(1);
+    expect(summary.results[0]).toEqual({
+      status: "skipped",
+      mint: "SoMint2222222222222222222222222222222222222",
+      reason: "OPEN case already exists",
+    });
+    expect(summary.results[1]?.status).toBe("created");
   });
 });

@@ -1,5 +1,6 @@
 import { createTursoClient } from "../db/client";
 import {
+  resolveMaxNewCasesPerRun,
   runCollection,
   type CollectionSummary,
   type DiscoveryFn,
@@ -14,6 +15,7 @@ export type CollectCronEnv = {
   CRON_SECRET?: string;
   RADAR24_COLLECT_ENABLED?: string;
   TURSO_DATABASE_URL?: string;
+  V24_MAX_NEW_CASES_PER_RUN?: string;
 };
 
 export type CollectCronDeps = {
@@ -32,6 +34,9 @@ function readEnv(overrides?: CollectCronEnv): CollectCronEnv {
       overrides?.RADAR24_COLLECT_ENABLED ?? process.env.RADAR24_COLLECT_ENABLED,
     TURSO_DATABASE_URL:
       overrides?.TURSO_DATABASE_URL ?? process.env.TURSO_DATABASE_URL,
+    V24_MAX_NEW_CASES_PER_RUN:
+      overrides?.V24_MAX_NEW_CASES_PER_RUN
+      ?? process.env.V24_MAX_NEW_CASES_PER_RUN,
   };
 }
 
@@ -97,10 +102,15 @@ export async function handleCollectCron(
       owner,
       discoverTokens,
       fetchMarket,
+      maxNewCasesPerRun: resolveMaxNewCasesPerRun(
+        undefined,
+        env.V24_MAX_NEW_CASES_PER_RUN,
+      ),
     });
 
     return Response.json({
       enabled: true,
+      offered: summary.offered,
       discovered: summary.discovered,
       skipped: summary.skipped,
       jobsProcessed: summary.jobsProcessed,

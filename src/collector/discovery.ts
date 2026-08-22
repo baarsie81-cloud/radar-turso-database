@@ -25,10 +25,15 @@ export type PersistDiscoveredTokenResult =
     };
 
 export type PersistDiscoveredTokensResult = {
+  /** Tokens offered for persistence this run. */
+  offered: number;
   created: number;
   skipped: number;
   results: PersistDiscoveredTokenResult[];
 };
+
+export const DISCOVERY_LIMIT_SKIP_REASON =
+  "max new cases per run limit reached";
 
 const SOLANA_MINT_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
@@ -105,13 +110,29 @@ export async function persistDiscoveredToken(
 export async function persistDiscoveredTokens(
   client: Client,
   tokens: DiscoveredToken[],
-  options: { createdAt?: number } = {},
+  options: { createdAt?: number; maxNewCasesPerRun?: number } = {},
 ): Promise<PersistDiscoveredTokensResult> {
   const results: PersistDiscoveredTokenResult[] = [];
   let created = 0;
   let skipped = 0;
+  const maxNewCasesPerRun = options.maxNewCasesPerRun;
 
   for (const token of tokens) {
+    if (
+      maxNewCasesPerRun != null
+      && Number.isFinite(maxNewCasesPerRun)
+      && maxNewCasesPerRun >= 0
+      && created >= maxNewCasesPerRun
+    ) {
+      results.push({
+        status: "skipped",
+        mint: token.mint,
+        reason: DISCOVERY_LIMIT_SKIP_REASON,
+      });
+      skipped += 1;
+      continue;
+    }
+
     const result = await persistDiscoveredToken(client, token, options.createdAt);
     results.push(result);
     if (result.status === "created") {
@@ -121,5 +142,5 @@ export async function persistDiscoveredTokens(
     }
   }
 
-  return { created, skipped, results };
+  return { offered: tokens.length, created, skipped, results };
 }
