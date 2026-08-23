@@ -14,10 +14,7 @@ type LoadResult =
 
 async function loadCaseSummaries(): Promise<LoadResult> {
   if (!process.env.TURSO_DATABASE_URL) {
-    return {
-      ok: false,
-      error: "Turso is not configured. Set TURSO_DATABASE_URL.",
-    };
+    return { ok: false, error: "Turso is not configured. Set TURSO_DATABASE_URL." };
   }
 
   try {
@@ -30,16 +27,19 @@ async function loadCaseSummaries(): Promise<LoadResult> {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return {
-      ok: false,
-      error: `Turso unavailable: ${message}`,
-    };
+    return { ok: false, error: `Turso unavailable: ${message}` };
   }
 }
 
 export default async function RadarPage() {
   const fetchedAt = Date.now();
   const result = await loadCaseSummaries();
+
+  const summaries = result.ok
+    ? [...result.summaries].sort(
+        (a, b) => b.tokenCase.createdAt - a.tokenCase.createdAt,
+      )
+    : [];
 
   return (
     <main style={{ padding: "1.5rem", fontFamily: "system-ui, sans-serif" }}>
@@ -54,21 +54,11 @@ export default async function RadarPage() {
       <PushSettings />
 
       {!result.ok ? (
-        <p
-          role="alert"
-          style={{
-            marginTop: "1.5rem",
-            padding: "0.75rem 1rem",
-            background: "#f8f8f8",
-            border: "1px solid #ddd",
-            borderRadius: "4px",
-            color: "#333",
-          }}
-        >
+        <p role="alert" style={{ marginTop: "1.5rem", padding: "0.75rem 1rem", background: "#f8f8f8", border: "1px solid #ddd", borderRadius: "4px", color: "#333" }}>
           {result.error}
         </p>
       ) : (
-        <RadarCaseList summaries={result.summaries} />
+        <RadarCaseList summaries={summaries} />
       )}
     </main>
   );
