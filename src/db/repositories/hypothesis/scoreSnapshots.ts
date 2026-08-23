@@ -104,3 +104,21 @@ export async function listHypothesisScoreSnapshots(
   });
   return result.rows.map(mapHypothesisScoreSnapshotRow);
 }
+
+/** Latest snapshot for an asset, or null when none exist yet. */
+export async function getLatestHypothesisScoreSnapshot(
+  client: Client,
+  hypothesisAssetId: number,
+): Promise<HypothesisScoreSnapshotRow | null> {
+  const result = await client.execute({
+    sql: `
+      SELECT * FROM hypothesis_score_snapshots
+      WHERE hypothesis_asset_id = ?
+      ORDER BY captured_at DESC, id DESC
+      LIMIT 1
+    `,
+    args: [hypothesisAssetId],
+  });
+  const row = result.rows[0];
+  return row ? mapHypothesisScoreSnapshotRow(row) : null;
+}

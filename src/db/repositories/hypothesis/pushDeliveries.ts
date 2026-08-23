@@ -56,3 +56,19 @@ export async function hasHypothesisPushDelivery(
   });
   return result.rows.length > 0;
 }
+
+/** Remove a claim so a failed send can be retried. */
+export async function deleteHypothesisPushDelivery(
+  client: Client,
+  eventId: number,
+): Promise<boolean> {
+  const result = await client.execute({
+    sql: `
+      DELETE FROM hypothesis_push_deliveries
+      WHERE event_id = ?
+      RETURNING event_id
+    `,
+    args: [eventId],
+  });
+  return result.rows.length > 0;
+}

@@ -12,6 +12,7 @@ export type {
 
 export {
   insertHypothesisScoreSnapshot,
+  getLatestHypothesisScoreSnapshot,
   listHypothesisScoreSnapshots,
   mapHypothesisScoreSnapshotRow,
 } from "./scoreSnapshots";
@@ -33,6 +34,7 @@ export type {
 
 export {
   claimHypothesisPushDelivery,
+  deleteHypothesisPushDelivery,
   hasHypothesisPushDelivery,
   mapHypothesisPushDeliveryRow,
 } from "./pushDeliveries";

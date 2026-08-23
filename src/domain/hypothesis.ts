@@ -43,6 +43,8 @@ export const HYPOTHESIS_EVENT_TYPES = [
   "INVALIDATED",
   "RANK_CHANGED",
   "EXITED",
+  "OBSERVATION_UPDATE",
+  "SCORE_CHANGE",
 ] as const;
 
 export type HypothesisEventType = (typeof HYPOTHESIS_EVENT_TYPES)[number];
@@ -50,6 +52,8 @@ export type HypothesisEventType = (typeof HYPOTHESIS_EVENT_TYPES)[number];
 export const HYPOTHESIS_PUSH_EVENT_TYPES = [
   "HYPOTHESIS_ACTIVATED",
   "LIFECYCLE_MILESTONE",
+  "HYPOTHESIS_OBSERVATION_UPDATE",
+  "HYPOTHESIS_SCORE_CHANGE",
 ] as const;
 
 export type HypothesisPushEventType = (typeof HYPOTHESIS_PUSH_EVENT_TYPES)[number];

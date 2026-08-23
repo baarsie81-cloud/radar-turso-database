@@ -87,8 +87,10 @@ export type {
 export {
   claimHypothesisPushDelivery,
   createHypothesisAsset,
+  deleteHypothesisPushDelivery,
   getHypothesisAsset,
   getHypothesisEvent,
+  getLatestHypothesisScoreSnapshot,
   hasHypothesisPushDelivery,
   insertHypothesisEvent,
   insertHypothesisScoreSnapshot,

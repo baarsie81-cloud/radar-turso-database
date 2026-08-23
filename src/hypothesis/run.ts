@@ -3,7 +3,10 @@ import {
   listHypothesisUniverseAssets,
   type HypothesisAssetRow,
 } from "../db/repositories/hypothesis/assets";
-import { insertHypothesisScoreSnapshot } from "../db/repositories/hypothesis/scoreSnapshots";
+import {
+  getLatestHypothesisScoreSnapshot,
+  insertHypothesisScoreSnapshot,
+} from "../db/repositories/hypothesis/scoreSnapshots";
 import {
   acquireCollectionLock,
   HYPOTHESIS_LOCK_KEY,
@@ -18,10 +21,16 @@ import {
   gatherHypothesisMarketObservation,
   type GatheredHypothesisMarket,
 } from "./marketSource";
+import {
+  deliverHypothesisObservationPush,
+  isHypothesisObservationPushEnabled,
+  type HypothesisObservationPushEnv,
+  type HypothesisObservationSendFn,
+} from "./observationPush";
 import { computeHypothesisScore } from "./score";
 import { rankHypothesisAssets } from "./universe";
 
-export type HypothesisObservationEnv = {
+export type HypothesisObservationEnv = HypothesisObservationPushEnv & {
   RADAR24_HYPOTHESIS_ENABLED?: string;
 };
 
@@ -44,6 +53,8 @@ export type RunHypothesisObservationDeps = {
    * Defaults to gatherHypothesisMarketObservation.
    */
   gatherMarket?: GatherHypothesisMarketFn;
+  /** Optional observation push transport (web-push). */
+  sendObservationPush?: HypothesisObservationSendFn;
   /** Override universe listing (tests). Default: WATCH + ACTIVE. */
   listAssets?: (client: Client) => Promise<HypothesisAssetRow[]>;
   /** Milliseconds the hypothesis lock is held; defaults to 5 minutes. */
@@ -53,7 +64,7 @@ export type RunHypothesisObservationDeps = {
 };
 
 export type HypothesisObservationError = {
-  phase: "lock" | "list" | "asset";
+  phase: "lock" | "list" | "asset" | "push";
   context: string;
   message: string;
 };
@@ -62,6 +73,8 @@ export type HypothesisObservationSummary = {
   enabled: boolean;
   assetsConsidered: number;
   snapshotsWritten: number;
+  observationEvents: number;
+  observationPushes: number;
   errors: HypothesisObservationError[];
 };
 
@@ -76,6 +89,8 @@ function emptySummary(enabled: boolean): HypothesisObservationSummary {
     enabled,
     assetsConsidered: 0,
     snapshotsWritten: 0,
+    observationEvents: 0,
+    observationPushes: 0,
     errors: [],
   };
 }
@@ -108,11 +123,10 @@ async function collectWithMarketAdapter(
  * Hypothesis observation runner (research-only).
  *
  * Flow: universe assets → gather market (existing DB) →
- * collectHypothesisInputsFromMarket → computeHypothesisScore → append snapshot.
+ * collectHypothesisInputsFromMarket → computeHypothesisScore → append snapshot →
+ * optional observation push test (flagged separately).
  *
- * When market rows are missing, the adapter falls back to asset seed scores.
- * Does not emit events, push, lifecycle transitions, or Radar decisions.
- * Snapshots are append-only; history is never overwritten.
+ * Does not emit activation events, change status, or call Jupiter / Radar push.
  */
 export async function runHypothesisObservation(
   deps: RunHypothesisObservationDeps,
@@ -132,6 +146,7 @@ export async function runHypothesisObservation(
     deps.collectInputs
     ?? ((asset: HypothesisAssetRow, capturedAt: number) =>
       collectWithMarketAdapter(asset, capturedAt, gatherMarket));
+  const pushEnabled = isHypothesisObservationPushEnabled(deps.env);
   const summary = emptySummary(true);
 
   const startedAt = now();
@@ -223,7 +238,12 @@ export async function runHypothesisObservation(
     for (const row of prepared) {
       const label = `asset#${row.asset.id}(${row.asset.mint})`;
       try {
-        await insertHypothesisScoreSnapshot(deps.client, {
+        const previous = await getLatestHypothesisScoreSnapshot(
+          deps.client,
+          row.asset.id,
+        );
+
+        const current = await insertHypothesisScoreSnapshot(deps.client, {
           hypothesisAssetId: row.asset.id,
           capturedAt,
           hypothesisScore: row.hypothesisScore,
@@ -238,6 +258,32 @@ export async function runHypothesisObservation(
           scoreVersion: row.scoreVersion,
         });
         summary.snapshotsWritten += 1;
+
+        if (pushEnabled) {
+          const pushResult = await deliverHypothesisObservationPush({
+            client: deps.client,
+            asset: row.asset,
+            previous,
+            current,
+            env: deps.env,
+            sendPush: deps.sendObservationPush,
+            now: capturedAt,
+          });
+
+          if (pushResult.eventId != null) {
+            summary.observationEvents += 1;
+          }
+          if (pushResult.notified) {
+            summary.observationPushes += 1;
+          }
+          if (pushResult.error) {
+            summary.errors.push({
+              phase: "push",
+              context: label,
+              message: pushResult.error,
+            });
+          }
+        }
       } catch (err) {
         summary.errors.push({
           phase: "asset",
