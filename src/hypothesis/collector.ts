@@ -1,4 +1,8 @@
 import type { HypothesisAssetRow } from "../db/repositories/hypothesis/assets";
+import {
+  adaptHypothesisMarketInputs,
+  type HypothesisMarketObservation,
+} from "./marketAdapter";
 import type { HypothesisScoreInput } from "./score";
 
 /**
@@ -42,6 +46,40 @@ export function collectHypothesisInputsFromAsset(
       rank: asset.rank,
       captured_at: capturedAt,
       score_input: scoreInput,
+    }),
+  };
+}
+
+/**
+ * Market-aware collector: maps observation → score inputs via marketAdapter.
+ * Seed narrative/catalyst retained; missing market fields fall back explicitly.
+ * Does not fetch market data itself.
+ */
+export function collectHypothesisInputsFromMarket(
+  asset: HypothesisAssetRow,
+  market: HypothesisMarketObservation | null | undefined,
+  capturedAt: number,
+): HypothesisCollectedInputs {
+  const adapted = adaptHypothesisMarketInputs({
+    market,
+    seed: {
+      narrative_score: asset.narrativeScore,
+      catalyst_score: asset.catalystScore,
+      asymmetry_score: asset.asymmetryScore,
+      attention_score: asset.attentionScore,
+      liquidity_score: asset.liquidityScore,
+    },
+  });
+
+  return {
+    scoreInput: adapted.scoreInput,
+    inputsJson: JSON.stringify({
+      ...JSON.parse(adapted.inputsJson),
+      hypothesis_asset_id: asset.id,
+      mint: asset.mint,
+      status: asset.status,
+      rank: asset.rank,
+      captured_at: capturedAt,
     }),
   };
 }
