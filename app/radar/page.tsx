@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createTursoClient } from "../../src/db/client";
 import { listCaseSummaries } from "../../src/db/repositories/tokenCases";
 import { RADAR_VERSION } from "../../src/domain/types";
@@ -43,6 +44,14 @@ export default async function RadarPage() {
 
   return (
     <main style={{ padding: "1.5rem", fontFamily: "system-ui, sans-serif" }}>
+      <nav style={{ marginBottom: "0.75rem", fontSize: "0.9rem" }}>
+        <strong>Radar</strong>
+        {" · "}
+        <Link href="/hypothesis" style={{ color: "#333" }}>
+          Hypothesis
+        </Link>
+      </nav>
+
       <header style={{ marginBottom: "0.5rem" }}>
         <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
           Moonshot Radar {RADAR_VERSION} · Turso
