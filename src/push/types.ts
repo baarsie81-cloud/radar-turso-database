@@ -29,5 +29,8 @@ export type PushDeliverySummary = {
   candidates: number;
   delivered: number;
   skipped: number;
+  /** Tradeability blocks (EXECUTION_FAIL) and transport send failures. */
   errors: PushDeliveryError[];
+  /** Technical Jupiter/provider errors — inconclusive, not a bad-token label. */
+  unknown: PushDeliveryError[];
 };

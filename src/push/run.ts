@@ -17,6 +17,7 @@ export type ProcessPushWithWebPushDeps = {
   transport?: WebPushTransport;
   limit?: number;
   now?: () => number;
+  validateExecution?: ProcessPushDeliveriesDeps["validateExecution"];
 };
 
 /**
@@ -37,6 +38,7 @@ export async function processPushDeliveriesWithWebPush(
     sendPush,
     limit: deps.limit,
     now: deps.now,
+    validateExecution: deps.validateExecution,
   };
 
   return processPushDeliveries(runDeps);

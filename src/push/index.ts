@@ -49,3 +49,9 @@ export {
   type PushPayload,
   type PushSendFn,
 } from "./types";
+export { validateJupiterExecution } from "./executionGate";
+export type {
+  ExecutionGateDeps,
+  ExecutionGateResult,
+  ExecutionStatus,
+} from "./executionGate";

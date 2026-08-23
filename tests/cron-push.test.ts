@@ -21,6 +21,7 @@ const emptySummary: PushDeliverySummary = {
   delivered: 1,
   skipped: 1,
   errors: [{ decisionId: 9, message: "send failed" }],
+  unknown: [],
 };
 
 describe("GET /api/cron/push", () => {
@@ -135,7 +136,9 @@ describe("GET /api/cron/push", () => {
       sent: 1,
       failed: 1,
       skipped: 1,
+      unknown: 0,
       errors: [{ decisionId: 9, message: "send failed" }],
+      unknownErrors: [],
     });
 
     expect(createClient).toHaveBeenCalledOnce();

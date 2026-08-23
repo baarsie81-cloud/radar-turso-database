@@ -44,6 +44,7 @@ async function seedCase(
 
 function executionOk() {
   return Promise.resolve({
+    status: "EXECUTION_PASS" as const,
     ok: true,
     reason: null,
     buyOutAmount: "1000",
@@ -210,6 +211,7 @@ describe("V24 PASS-only push delivery", () => {
 
     const sendPush = vi.fn(async (_payload: PushPayload) => undefined);
     const validateExecution = vi.fn(async () => ({
+      status: "EXECUTION_FAIL" as const,
       ok: false,
       reason: "EXECUTION_FAIL_NO_SELL_ROUTE",
       buyOutAmount: "1000",
@@ -223,6 +225,41 @@ describe("V24 PASS-only push delivery", () => {
     expect(summary.skipped).toBe(1);
     expect(summary.errors).toEqual([
       { decisionId: decision.id, message: "EXECUTION_FAIL_NO_SELL_ROUTE" },
+    ]);
+    expect(summary.unknown).toEqual([]);
+    expect(sendPush).not.toHaveBeenCalled();
+    expect(await hasPushDelivery(client, decision.id)).toBe(false);
+  });
+
+  it("skips push on EXECUTION_UNKNOWN without labeling as FAIL", async () => {
+    const client = await setup();
+    const tokenCase = await seedCase(client);
+    const decision = await storeDecision(client, {
+      tokenCaseId: tokenCase.id,
+      decisionStage: "PLUS_10",
+      decidedAt: BASE + 600_000,
+      decisionStatus: "PASS",
+      plus10RoiPct: 30,
+      momentum5To10Pct: 10,
+      inputsJson: JSON.stringify({ plus10RoiPct: 30 }),
+    });
+
+    const sendPush = vi.fn(async (_payload: PushPayload) => undefined);
+    const validateExecution = vi.fn(async () => ({
+      status: "EXECUTION_UNKNOWN" as const,
+      ok: false,
+      reason: "EXECUTION_UNKNOWN_PROVIDER:timeout",
+      buyOutAmount: null,
+      sellOutAmount: null,
+      roundTripLossPct: null,
+    }));
+
+    const summary = await processPushDeliveries({ client, sendPush, validateExecution });
+    expect(summary.delivered).toBe(0);
+    expect(summary.skipped).toBe(1);
+    expect(summary.errors).toEqual([]);
+    expect(summary.unknown).toEqual([
+      { decisionId: decision.id, message: "EXECUTION_UNKNOWN_PROVIDER:timeout" },
     ]);
     expect(sendPush).not.toHaveBeenCalled();
     expect(await hasPushDelivery(client, decision.id)).toBe(false);
@@ -243,8 +280,9 @@ describe("V24 PASS-only push delivery", () => {
 
     const sendPush = vi.fn(async (_payload: PushPayload) => undefined);
     const validateExecution = vi.fn(async () => ({
+      status: "EXECUTION_UNKNOWN" as const,
       ok: false,
-      reason: "EXECUTION_FAIL_PROVIDER:timeout",
+      reason: "EXECUTION_UNKNOWN_PROVIDER:timeout",
       buyOutAmount: null,
       sellOutAmount: null,
       roundTripLossPct: null,
@@ -253,6 +291,8 @@ describe("V24 PASS-only push delivery", () => {
     const summary = await processPushDeliveries({ client, sendPush, validateExecution });
     expect(summary.delivered).toBe(0);
     expect(summary.skipped).toBe(1);
+    expect(summary.unknown).toHaveLength(1);
+    expect(summary.errors).toHaveLength(0);
     expect(sendPush).not.toHaveBeenCalled();
   });
 

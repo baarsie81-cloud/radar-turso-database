@@ -3,7 +3,21 @@ const DEFAULT_TEST_LAMPORTS = 10_000_000; // 0.01 SOL
 const DEFAULT_SLIPPAGE_BPS = 100;
 const JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote";
 
+/** Proven executable routes that clear the push tradeability gate. */
+export type ExecutionPassStatus = "EXECUTION_PASS";
+/** Demonstrable tradeability block (no/invalid route). Not a provider outage. */
+export type ExecutionFailStatus = "EXECUTION_FAIL";
+/** Technical / temporary Jupiter or transport failure — inconclusive. */
+export type ExecutionUnknownStatus = "EXECUTION_UNKNOWN";
+
+export type ExecutionStatus =
+  | ExecutionPassStatus
+  | ExecutionFailStatus
+  | ExecutionUnknownStatus;
+
 export type ExecutionGateResult = {
+  status: ExecutionStatus;
+  /** True only for EXECUTION_PASS. */
   ok: boolean;
   reason: string | null;
   buyOutAmount: string | null;
@@ -22,6 +36,47 @@ type JupiterQuote = {
   routePlan?: unknown[];
   error?: string;
 };
+
+function passResult(input: {
+  buyOutAmount: string;
+  sellOutAmount: string;
+  roundTripLossPct: number | null;
+}): ExecutionGateResult {
+  return {
+    status: "EXECUTION_PASS",
+    ok: true,
+    reason: null,
+    buyOutAmount: input.buyOutAmount,
+    sellOutAmount: input.sellOutAmount,
+    roundTripLossPct: input.roundTripLossPct,
+  };
+}
+
+function failResult(input: {
+  reason: string;
+  buyOutAmount: string | null;
+  sellOutAmount: string | null;
+}): ExecutionGateResult {
+  return {
+    status: "EXECUTION_FAIL",
+    ok: false,
+    reason: input.reason,
+    buyOutAmount: input.buyOutAmount,
+    sellOutAmount: input.sellOutAmount,
+    roundTripLossPct: null,
+  };
+}
+
+function unknownResult(reason: string): ExecutionGateResult {
+  return {
+    status: "EXECUTION_UNKNOWN",
+    ok: false,
+    reason,
+    buyOutAmount: null,
+    sellOutAmount: null,
+    roundTripLossPct: null,
+  };
+}
 
 function validQuote(quote: JupiterQuote): quote is JupiterQuote & { outAmount: string } {
   return typeof quote.outAmount === "string"
@@ -63,6 +118,11 @@ async function fetchQuote(
  * Fail-closed executable-route check for an otherwise valid PLUS_10 PASS.
  * Simulates 0.01 SOL -> token and immediately the quoted token amount -> SOL.
  * It never submits a swap and does not apply a round-trip-loss threshold yet.
+ *
+ * Status split:
+ * - EXECUTION_PASS — buy + sell routes valid
+ * - EXECUTION_FAIL — demonstrable no/invalid route (blocks push as untradeable)
+ * - EXECUTION_UNKNOWN — HTTP/timeout/provider/tech error (no push; not a bad token)
  */
 export async function validateJupiterExecution(
   mint: string,
@@ -82,13 +142,11 @@ export async function validateJupiterExecution(
     );
 
     if (!validQuote(buy)) {
-      return {
-        ok: false,
+      return failResult({
         reason: "EXECUTION_FAIL_NO_BUY_ROUTE",
         buyOutAmount: buy.outAmount ?? null,
         sellOutAmount: null,
-        roundTripLossPct: null,
-      };
+      });
     }
 
     const sell = await fetchQuote(
@@ -100,32 +158,23 @@ export async function validateJupiterExecution(
     );
 
     if (!validQuote(sell)) {
-      return {
-        ok: false,
+      return failResult({
         reason: "EXECUTION_FAIL_NO_SELL_ROUTE",
         buyOutAmount: buy.outAmount,
         sellOutAmount: sell.outAmount ?? null,
-        roundTripLossPct: null,
-      };
+      });
     }
 
     const sellLamports = Number(sell.outAmount);
     const roundTripLossPct = ((testLamports - sellLamports) / testLamports) * 100;
 
-    return {
-      ok: true,
-      reason: null,
+    return passResult({
       buyOutAmount: buy.outAmount,
       sellOutAmount: sell.outAmount,
       roundTripLossPct: Number.isFinite(roundTripLossPct) ? roundTripLossPct : null,
-    };
+    });
   } catch (error) {
-    return {
-      ok: false,
-      reason: `EXECUTION_FAIL_PROVIDER:${error instanceof Error ? error.message : String(error)}`,
-      buyOutAmount: null,
-      sellOutAmount: null,
-      roundTripLossPct: null,
-    };
+    const detail = error instanceof Error ? error.message : String(error);
+    return unknownResult(`EXECUTION_UNKNOWN_PROVIDER:${detail}`);
   }
 }

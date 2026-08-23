@@ -92,11 +92,15 @@ export async function handlePushCron(
       delivered: summary.delivered,
       skipped: summary.skipped,
       errors: summary.errors.length,
+      unknown: summary.unknown.length,
       durationMs: Date.now() - startedAt,
     });
 
     if (summary.errors.length > 0) {
       console.error("[push] delivery errors", summary.errors);
+    }
+    if (summary.unknown.length > 0) {
+      console.warn("[push] execution UNKNOWN (inconclusive)", summary.unknown);
     }
 
     return Response.json({
@@ -105,7 +109,9 @@ export async function handlePushCron(
       sent: summary.delivered,
       failed: summary.errors.length,
       skipped: summary.skipped,
+      unknown: summary.unknown.length,
       errors: summary.errors,
+      unknownErrors: summary.unknown,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

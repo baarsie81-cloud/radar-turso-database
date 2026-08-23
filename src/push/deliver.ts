@@ -36,6 +36,7 @@ function emptySummary(candidates = 0): PushDeliverySummary {
     delivered: 0,
     skipped: 0,
     errors: [],
+    unknown: [],
   };
 }
 
@@ -45,6 +46,11 @@ function emptySummary(candidates = 0): PushDeliverySummary {
  * Flow: select stored decisions → executable Jupiter route gate → build payload
  * → claim delivery → send. Does not call evaluateRadar24 and does not change
  * the stored strategy decision. Deduplicates by decision_id.
+ *
+ * Execution statuses:
+ * - EXECUTION_PASS → push may proceed
+ * - EXECUTION_FAIL → block push (proven untradeable)
+ * - EXECUTION_UNKNOWN → no push; inconclusive provider/tech error (not a bad token)
  */
 export async function processPushDeliveries(
   deps: ProcessPushDeliveriesDeps,
@@ -56,15 +62,54 @@ export async function processPushDeliveries(
   const summary = emptySummary(candidates.length);
 
   for (const candidate of candidates) {
+    console.info("[push] strategy PASS", {
+      decisionId: candidate.decisionId,
+      tokenCaseId: candidate.tokenCaseId,
+      mint: candidate.mint,
+    });
+
     const execution = await validateExecution(candidate.mint);
-    if (!execution.ok) {
+
+    if (execution.status === "EXECUTION_UNKNOWN") {
+      const blockReason = execution.reason ?? "EXECUTION_UNKNOWN";
       summary.skipped += 1;
-      summary.errors.push({
+      summary.unknown.push({
         decisionId: candidate.decisionId,
-        message: execution.reason ?? "EXECUTION_FAIL_UNKNOWN",
+        message: blockReason,
+      });
+      console.warn("[push] execution UNKNOWN", {
+        decisionId: candidate.decisionId,
+        mint: candidate.mint,
+        executionStatus: execution.status,
+        pushDecision: "SKIP",
+        blockReason,
       });
       continue;
     }
+
+    if (execution.status === "EXECUTION_FAIL" || !execution.ok) {
+      const blockReason = execution.reason ?? "EXECUTION_FAIL";
+      summary.skipped += 1;
+      summary.errors.push({
+        decisionId: candidate.decisionId,
+        message: blockReason,
+      });
+      console.info("[push] execution FAIL", {
+        decisionId: candidate.decisionId,
+        mint: candidate.mint,
+        executionStatus: "EXECUTION_FAIL",
+        pushDecision: "BLOCK",
+        blockReason,
+      });
+      continue;
+    }
+
+    console.info("[push] execution PASS", {
+      decisionId: candidate.decisionId,
+      mint: candidate.mint,
+      executionStatus: execution.status,
+      roundTripLossPct: execution.roundTripLossPct,
+    });
 
     const payload: PushPayload = buildPassPushPayload(candidate);
 
@@ -76,17 +121,35 @@ export async function processPushDeliveries(
 
     if (!claimed) {
       summary.skipped += 1;
+      console.info("[push] push decision", {
+        decisionId: candidate.decisionId,
+        pushDecision: "SKIP",
+        blockReason: "ALREADY_CLAIMED_OR_DELIVERED",
+      });
       continue;
     }
 
     try {
       await deps.sendPush(payload);
       summary.delivered += 1;
+      console.info("[push] push decision", {
+        decisionId: candidate.decisionId,
+        mint: candidate.mint,
+        pushDecision: "SEND",
+        blockReason: null,
+      });
     } catch (error) {
       await deletePushDelivery(deps.client, candidate.decisionId);
+      const message = errorMessage(error);
       summary.errors.push({
         decisionId: candidate.decisionId,
-        message: errorMessage(error),
+        message,
+      });
+      console.error("[push] push decision", {
+        decisionId: candidate.decisionId,
+        mint: candidate.mint,
+        pushDecision: "SEND_FAILED",
+        blockReason: message,
       });
     }
   }

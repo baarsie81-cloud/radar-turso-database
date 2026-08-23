@@ -288,6 +288,14 @@ describe("Web Push transport foundation", () => {
     });
 
     const sendNotification = vi.fn(async () => undefined);
+    const validateExecution = vi.fn(async () => ({
+      status: "EXECUTION_PASS" as const,
+      ok: true,
+      reason: null,
+      buyOutAmount: "1000",
+      sellOutAmount: "9900000",
+      roundTripLossPct: 1,
+    }));
     const summary = await processPushDeliveriesWithWebPush({
       client,
       env: VAPID,
@@ -295,6 +303,7 @@ describe("Web Push transport foundation", () => {
         sendNotification,
         setVapidDetails: vi.fn(),
       },
+      validateExecution,
       now: () => BASE + 900_000,
     });
 
@@ -341,7 +350,19 @@ describe("Web Push transport foundation", () => {
     const client = await setup();
     await seedPassDecision(client);
     const sendPush = vi.fn(async (_payload: PushPayload) => undefined);
-    const summary = await processPushDeliveries({ client, sendPush });
+    const validateExecution = vi.fn(async () => ({
+      status: "EXECUTION_PASS" as const,
+      ok: true,
+      reason: null,
+      buyOutAmount: "1000",
+      sellOutAmount: "9900000",
+      roundTripLossPct: 1,
+    }));
+    const summary = await processPushDeliveries({
+      client,
+      sendPush,
+      validateExecution,
+    });
     expect(summary.delivered).toBe(1);
     expect(sendPush).toHaveBeenCalledOnce();
   });
