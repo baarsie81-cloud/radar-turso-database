@@ -8,6 +8,15 @@ export const HYPOTHESIS_SCORE_VERSION = "h1.0";
 /** Maximum concurrent WATCH + ACTIVE universe slots. */
 export const HYPOTHESIS_UNIVERSE_MAX = 25;
 
+/** Candidate must beat weakest member by this many points to replace. */
+export const HYPOTHESIS_REPLACEMENT_MARGIN = 5;
+
+/**
+ * Members at or below this floor leave the active universe selection.
+ * Default 0: only INVALIDATED / replacement / explicit floor override remove sticky assets.
+ */
+export const HYPOTHESIS_UNIVERSE_SCORE_FLOOR = 0;
+
 export const HYPOTHESIS_STATUSES = ["WATCH", "ACTIVE", "INVALIDATED"] as const;
 
 export type HypothesisStatus = (typeof HYPOTHESIS_STATUSES)[number];
