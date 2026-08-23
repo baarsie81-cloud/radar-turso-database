@@ -2,6 +2,7 @@ export {
   createHypothesisAsset,
   getHypothesisAsset,
   listHypothesisAssetsByStatus,
+  listHypothesisUniverseAssets,
   mapHypothesisAssetRow,
 } from "./assets";
 export type {

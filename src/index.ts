@@ -93,6 +93,7 @@ export {
   listHypothesisAssetsByStatus,
   listHypothesisEvents,
   listHypothesisScoreSnapshots,
+  listHypothesisUniverseAssets,
 } from "./db/repositories/hypothesis";
 export type {
   CreateHypothesisAssetInput,

@@ -154,3 +154,20 @@ export async function listHypothesisAssetsByStatus(
   });
   return result.rows.map(mapHypothesisAssetRow);
 }
+
+/**
+ * Open hypothesis universe for observation (WATCH + ACTIVE only).
+ * INVALIDATED assets are excluded — research history stays in snapshots/events.
+ */
+export async function listHypothesisUniverseAssets(
+  client: Client,
+): Promise<HypothesisAssetRow[]> {
+  const result = await client.execute({
+    sql: `
+      SELECT * FROM hypothesis_assets
+      WHERE status IN ('WATCH', 'ACTIVE')
+      ORDER BY rank IS NULL, rank ASC, id ASC
+    `,
+  });
+  return result.rows.map(mapHypothesisAssetRow);
+}

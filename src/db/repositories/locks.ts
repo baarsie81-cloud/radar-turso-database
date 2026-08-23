@@ -3,6 +3,8 @@ import { num, numOrNull, str } from "../map";
 
 export const DEFAULT_COLLECTION_LOCK_KEY = "v24-collect";
 export const LIFECYCLE_LOCK_KEY = "v24-lifecycle";
+/** Hypothesis observation runner — must not share collect/lifecycle locks. */
+export const HYPOTHESIS_LOCK_KEY = "v24-hypothesis";
 
 export type CollectionLockRow = {
   jobKey: string;
