@@ -10,9 +10,14 @@ import {
   releaseCollectionLock,
 } from "../db/repositories/locks";
 import {
-  collectHypothesisInputsFromAsset,
+  collectHypothesisInputsFromMarket,
   type CollectHypothesisInputsFn,
+  type HypothesisCollectedInputs,
 } from "./collector";
+import {
+  gatherHypothesisMarketObservation,
+  type GatheredHypothesisMarket,
+} from "./marketSource";
 import { computeHypothesisScore } from "./score";
 import { rankHypothesisAssets } from "./universe";
 
@@ -20,12 +25,25 @@ export type HypothesisObservationEnv = {
   RADAR24_HYPOTHESIS_ENABLED?: string;
 };
 
+export type GatherHypothesisMarketFn = (
+  asset: HypothesisAssetRow,
+) => Promise<GatheredHypothesisMarket> | GatheredHypothesisMarket;
+
 export type RunHypothesisObservationDeps = {
   client: Client;
   owner: string;
   /** Feature flag source; observation runs only when === "true". */
   env?: HypothesisObservationEnv;
+  /**
+   * Full collector override (tests). When set, skips market gather + adapter path.
+   * Prefer gatherMarket for normal customization.
+   */
   collectInputs?: CollectHypothesisInputsFn;
+  /**
+   * Resolve existing project market rows for an asset (no network).
+   * Defaults to gatherHypothesisMarketObservation.
+   */
+  gatherMarket?: GatherHypothesisMarketFn;
   /** Override universe listing (tests). Default: WATCH + ACTIVE. */
   listAssets?: (client: Client) => Promise<HypothesisAssetRow[]>;
   /** Milliseconds the hypothesis lock is held; defaults to 5 minutes. */
@@ -66,10 +84,33 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function collectWithMarketAdapter(
+  asset: HypothesisAssetRow,
+  capturedAt: number,
+  gatherMarket: GatherHypothesisMarketFn,
+): Promise<HypothesisCollectedInputs> {
+  const gathered = await gatherMarket(asset);
+  return collectHypothesisInputsFromMarket(
+    asset,
+    gathered.market,
+    capturedAt,
+    {
+      dataSources: gathered.dataSources,
+      missingFields: gathered.missingFields,
+      resolution: gathered.resolution,
+      snapshotId: gathered.snapshotId,
+      tokenCaseId: gathered.tokenCaseId,
+    },
+  );
+}
+
 /**
  * Hypothesis observation runner (research-only).
  *
- * Flow: universe assets → collect inputs → computeHypothesisScore → append snapshot.
+ * Flow: universe assets → gather market (existing DB) →
+ * collectHypothesisInputsFromMarket → computeHypothesisScore → append snapshot.
+ *
+ * When market rows are missing, the adapter falls back to asset seed scores.
  * Does not emit events, push, lifecycle transitions, or Radar decisions.
  * Snapshots are append-only; history is never overwritten.
  */
@@ -82,8 +123,15 @@ export async function runHypothesisObservation(
 
   const now = deps.now ?? (() => Date.now());
   const lockDurationMs = deps.lockDurationMs ?? 5 * 60_000;
-  const collectInputs = deps.collectInputs ?? collectHypothesisInputsFromAsset;
   const listAssets = deps.listAssets ?? listHypothesisUniverseAssets;
+  const gatherMarket =
+    deps.gatherMarket
+    ?? ((asset: HypothesisAssetRow) =>
+      gatherHypothesisMarketObservation(deps.client, asset));
+  const collectInputs =
+    deps.collectInputs
+    ?? ((asset: HypothesisAssetRow, capturedAt: number) =>
+      collectWithMarketAdapter(asset, capturedAt, gatherMarket));
   const summary = emptySummary(true);
 
   const startedAt = now();

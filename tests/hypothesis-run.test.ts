@@ -11,6 +11,13 @@ import {
   HYPOTHESIS_LOCK_KEY,
   LIFECYCLE_LOCK_KEY,
 } from "../src/db/repositories/locks";
+import { upsertSnapshot } from "../src/db/repositories/snapshots";
+import { createTokenCase } from "../src/db/repositories/tokenCases";
+import {
+  mapAbsPctToAttentionScore,
+  mapLiquidityUsdToScore,
+  mapMarketCapToAsymmetryScore,
+} from "../src/hypothesis/marketAdapter";
 import { computeHypothesisScore } from "../src/hypothesis/score";
 import { runHypothesisObservation } from "../src/hypothesis/run";
 
@@ -153,8 +160,16 @@ describe("runHypothesisObservation", () => {
       scoreVersion: expectedWatch.score_version,
     });
     expect(JSON.parse(watchHistory[0]!.inputsJson)).toMatchObject({
-      source: "hypothesis_asset_passthrough",
+      source: "hypothesis_market_adapter",
       mint: watch.mint,
+      market_resolution: "none",
+      components: {
+        narrative_score: "seed_retained",
+        catalyst_score: "seed_retained",
+        asymmetry_score: "seed_fallback",
+        attention_score: "seed_fallback",
+        liquidity_score: "seed_fallback",
+      },
     });
 
     expect(activeHistory[0]).toMatchObject({
@@ -266,5 +281,185 @@ describe("runHypothesisObservation", () => {
     });
     expect(afterExpiry.snapshotsWritten).toBe(1);
     expect(afterExpiry.errors).toEqual([]);
+  });
+
+  it("uses market adapter with existing radar snapshot data", async () => {
+    const client = await setup();
+
+    const tokenCase = await createTokenCase(client, {
+      mint: mint("MKT"),
+      symbol: "MKT",
+      firstSeenAt: BASE,
+      entryPrice: 1,
+      entryValid: true,
+      stage: "INITIAL",
+      caseStatus: "OPEN",
+      createdAt: BASE,
+    });
+    await upsertSnapshot(client, {
+      tokenCaseId: tokenCase.id,
+      stage: "INITIAL",
+      capturedAt: BASE,
+      price: 1,
+      roiPct: 20,
+      marketCap: 1_000_000,
+      liquidityUsd: 100_000,
+    });
+
+    const asset = await createHypothesisAsset(client, {
+      mint: mint("MKT"),
+      symbol: "MKT",
+      status: "WATCH",
+      tokenCaseId: tokenCase.id,
+      narrativeScore: 70,
+      asymmetryScore: 40,
+      catalystScore: 55,
+      attentionScore: 35,
+      liquidityScore: 30,
+      updatedAt: BASE,
+    });
+
+    const summary = await runHypothesisObservation({
+      client,
+      owner: OWNER,
+      env: { RADAR24_HYPOTHESIS_ENABLED: "true" },
+      now: () => BASE + 2_000,
+      listAssets: async () => [asset],
+    });
+    expect(summary.snapshotsWritten).toBe(1);
+
+    const [snap] = await listHypothesisScoreSnapshots(client, asset.id);
+    expect(snap).toBeTruthy();
+    expect(snap!.narrativeScore).toBe(70);
+    expect(snap!.catalystScore).toBe(55);
+    expect(snap!.liquidityScore).toBe(mapLiquidityUsdToScore(100_000));
+    expect(snap!.asymmetryScore).toBe(mapMarketCapToAsymmetryScore(1_000_000));
+    expect(snap!.attentionScore).toBe(mapAbsPctToAttentionScore(20));
+
+    const expected = computeHypothesisScore({
+      narrative_score: 70,
+      catalyst_score: 55,
+      asymmetry_score: snap!.asymmetryScore,
+      attention_score: snap!.attentionScore,
+      liquidity_score: snap!.liquidityScore,
+    });
+    expect(snap!.hypothesisScore).toBe(expected.hypothesis_score);
+
+    const provenance = JSON.parse(snap!.inputsJson);
+    expect(provenance.source).toBe("hypothesis_market_adapter");
+    expect(provenance.market_resolution).toBe("token_case_id_snapshot");
+    expect(provenance.data_sources).toContain("radar_snapshots");
+    expect(provenance.components.liquidity_score).toBe("market");
+    expect(provenance.components.asymmetry_score).toBe("market");
+    expect(provenance.components.attention_score).toBe("market");
+    expect(provenance.attention_basis).toBe("roiPct");
+    expect(provenance.missing_fields).toEqual(
+      expect.arrayContaining(["volumeUsd", "priceChangePct", "momentumPct"]),
+    );
+  });
+
+  it("falls back via market adapter when no market rows exist", async () => {
+    const client = await setup();
+    const asset = await createHypothesisAsset(client, {
+      mint: mint("FBK"),
+      status: "WATCH",
+      narrativeScore: 66,
+      asymmetryScore: 44,
+      catalystScore: 55,
+      attentionScore: 33,
+      liquidityScore: 22,
+      updatedAt: BASE,
+    });
+
+    await runHypothesisObservation({
+      client,
+      owner: OWNER,
+      env: { RADAR24_HYPOTHESIS_ENABLED: "true" },
+      now: () => BASE + 3_000,
+      listAssets: async () => [asset],
+    });
+
+    const [snap] = await listHypothesisScoreSnapshots(client, asset.id);
+    const expected = computeHypothesisScore({
+      narrative_score: 66,
+      asymmetry_score: 44,
+      catalyst_score: 55,
+      attention_score: 33,
+      liquidity_score: 22,
+    });
+    expect(snap).toMatchObject({
+      hypothesisScore: expected.hypothesis_score,
+      narrativeScore: 66,
+      asymmetryScore: 44,
+      catalystScore: 55,
+      attentionScore: 33,
+      liquidityScore: 22,
+    });
+
+    const provenance = JSON.parse(snap!.inputsJson);
+    expect(provenance.source).toBe("hypothesis_market_adapter");
+    expect(provenance.market_resolution).toBe("none");
+    expect(provenance.data_sources).toEqual([]);
+    expect(provenance.components.liquidity_score).toBe("seed_fallback");
+    expect(provenance.missing_fields).toContain("liquidityUsd");
+  });
+
+  it("replay with same market inputs yields the same score", async () => {
+    const client = await setup();
+    const asset = await createHypothesisAsset(client, {
+      mint: mint("DET"),
+      status: "ACTIVE",
+      narrativeScore: 60,
+      asymmetryScore: 50,
+      catalystScore: 40,
+      attentionScore: 30,
+      liquidityScore: 20,
+      updatedAt: BASE,
+    });
+
+    const gatherMarket = async () => ({
+      market: {
+        price: 2,
+        marketCap: 5_000_000,
+        liquidityUsd: 250_000,
+        roiPct: 12,
+      },
+      dataSources: ["test_fixture"],
+      missingFields: ["volumeUsd", "priceChangePct", "momentumPct"],
+      resolution: "none" as const,
+      snapshotId: null,
+      tokenCaseId: null,
+    });
+
+    await runHypothesisObservation({
+      client,
+      owner: OWNER,
+      env: { RADAR24_HYPOTHESIS_ENABLED: "true" },
+      now: () => BASE + 4_000,
+      listAssets: async () => [asset],
+      gatherMarket,
+    });
+    await runHypothesisObservation({
+      client,
+      owner: OWNER,
+      env: { RADAR24_HYPOTHESIS_ENABLED: "true" },
+      now: () => BASE + 5_000,
+      listAssets: async () => [asset],
+      gatherMarket,
+    });
+
+    const history = await listHypothesisScoreSnapshots(client, asset.id);
+    expect(history).toHaveLength(2);
+    expect(history[0]!.hypothesisScore).toBe(history[1]!.hypothesisScore);
+    expect(history[0]!.narrativeScore).toBe(history[1]!.narrativeScore);
+    expect(history[0]!.asymmetryScore).toBe(history[1]!.asymmetryScore);
+    expect(history[0]!.catalystScore).toBe(history[1]!.catalystScore);
+    expect(history[0]!.attentionScore).toBe(history[1]!.attentionScore);
+    expect(history[0]!.liquidityScore).toBe(history[1]!.liquidityScore);
+
+    const firstInputs = JSON.parse(history[0]!.inputsJson);
+    const secondInputs = JSON.parse(history[1]!.inputsJson);
+    expect(firstInputs.score_input).toEqual(secondInputs.score_input);
+    expect(firstInputs.components).toEqual(secondInputs.components);
   });
 });

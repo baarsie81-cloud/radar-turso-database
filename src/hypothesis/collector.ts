@@ -59,6 +59,13 @@ export function collectHypothesisInputsFromMarket(
   asset: HypothesisAssetRow,
   market: HypothesisMarketObservation | null | undefined,
   capturedAt: number,
+  gatherMeta?: {
+    dataSources?: string[];
+    missingFields?: string[];
+    resolution?: string;
+    snapshotId?: number | null;
+    tokenCaseId?: number | null;
+  },
 ): HypothesisCollectedInputs {
   const adapted = adaptHypothesisMarketInputs({
     market,
@@ -80,6 +87,11 @@ export function collectHypothesisInputsFromMarket(
       status: asset.status,
       rank: asset.rank,
       captured_at: capturedAt,
+      data_sources: gatherMeta?.dataSources ?? [],
+      missing_fields: gatherMeta?.missingFields ?? [],
+      market_resolution: gatherMeta?.resolution ?? "injected",
+      snapshot_id: gatherMeta?.snapshotId ?? null,
+      token_case_id: gatherMeta?.tokenCaseId ?? asset.tokenCaseId,
     }),
   };
 }
