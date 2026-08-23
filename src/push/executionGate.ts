@@ -35,7 +35,16 @@ type JupiterQuote = {
   outAmount?: string;
   routePlan?: unknown[];
   error?: string;
+  errorCode?: string;
 };
+
+/** Jupiter 4xx bodies that prove the mint/route is not tradeable. */
+const TRADEABILITY_ERROR_CODES = new Set([
+  "TOKEN_NOT_TRADABLE",
+  "COULD_NOT_FIND_ANY_ROUTE",
+  "NO_ROUTES_FOUND",
+  "ROUTE_NOT_FOUND",
+]);
 
 function passResult(input: {
   buyOutAmount: string;
@@ -86,6 +95,26 @@ function validQuote(quote: JupiterQuote): quote is JupiterQuote & { outAmount: s
     && quote.routePlan.length > 0;
 }
 
+function isTradeabilityError(body: JupiterQuote): boolean {
+  if (body.errorCode && TRADEABILITY_ERROR_CODES.has(body.errorCode)) {
+    return true;
+  }
+  const message = (body.error ?? "").toLowerCase();
+  return (
+    message.includes("not tradable")
+    || message.includes("no route")
+    || message.includes("could not find")
+  );
+}
+
+async function readQuoteBody(response: Response): Promise<JupiterQuote> {
+  try {
+    return (await response.json()) as JupiterQuote;
+  } catch {
+    return {};
+  }
+}
+
 async function fetchQuote(
   fetchFn: typeof fetch,
   inputMint: string,
@@ -98,8 +127,17 @@ async function fetchQuote(
   url.searchParams.set("outputMint", outputMint);
   url.searchParams.set("amount", amount);
   url.searchParams.set("slippageBps", String(slippageBps));
+  // V2 instructions are supported on lite-api; do not set
+  // restrictIntermediateTokens=false — free tier rejects it with HTTP 400.
   url.searchParams.set("instructionVersion", "V2");
-  url.searchParams.set("restrictIntermediateTokens", "false");
+
+  console.info("[push] Jupiter request", {
+    inputMint,
+    outputMint,
+    amount,
+    slippageBps,
+    instructionVersion: "V2",
+  });
 
   const response = await fetchFn(url, {
     method: "GET",
@@ -107,11 +145,28 @@ async function fetchQuote(
     signal: AbortSignal.timeout(8_000),
   });
 
+  const body = await readQuoteBody(response);
+
+  console.info("[push] Jupiter response status", {
+    status: response.status,
+    ok: response.ok,
+    errorCode: body.errorCode ?? null,
+    error: body.error ?? null,
+    hasRoute: Array.isArray(body.routePlan) && body.routePlan.length > 0,
+    outAmount: body.outAmount ?? null,
+  });
+
   if (!response.ok) {
-    throw new Error(`Jupiter quote HTTP ${response.status}`);
+    const detail = body.errorCode ?? body.error ?? `HTTP ${response.status}`;
+    if (isTradeabilityError(body)) {
+      const error = new Error(`TRADEABILITY:${detail}`);
+      (error as Error & { tradeability: true }).tradeability = true;
+      throw error;
+    }
+    throw new Error(`Jupiter quote HTTP ${response.status}:${detail}`);
   }
 
-  return response.json() as Promise<JupiterQuote>;
+  return body;
 }
 
 /**
@@ -142,11 +197,13 @@ export async function validateJupiterExecution(
     );
 
     if (!validQuote(buy)) {
-      return failResult({
+      const result = failResult({
         reason: "EXECUTION_FAIL_NO_BUY_ROUTE",
         buyOutAmount: buy.outAmount ?? null,
         sellOutAmount: null,
       });
+      console.info("[push] execution result", result);
+      return result;
     }
 
     const sell = await fetchQuote(
@@ -158,23 +215,44 @@ export async function validateJupiterExecution(
     );
 
     if (!validQuote(sell)) {
-      return failResult({
+      const result = failResult({
         reason: "EXECUTION_FAIL_NO_SELL_ROUTE",
         buyOutAmount: buy.outAmount,
         sellOutAmount: sell.outAmount ?? null,
       });
+      console.info("[push] execution result", result);
+      return result;
     }
 
     const sellLamports = Number(sell.outAmount);
     const roundTripLossPct = ((testLamports - sellLamports) / testLamports) * 100;
 
-    return passResult({
+    const result = passResult({
       buyOutAmount: buy.outAmount,
       sellOutAmount: sell.outAmount,
       roundTripLossPct: Number.isFinite(roundTripLossPct) ? roundTripLossPct : null,
     });
+    console.info("[push] execution result", result);
+    return result;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return unknownResult(`EXECUTION_UNKNOWN_PROVIDER:${detail}`);
+    if (
+      detail.startsWith("TRADEABILITY:")
+      || (error instanceof Error && (error as Error & { tradeability?: boolean }).tradeability)
+    ) {
+      const reason = detail.startsWith("TRADEABILITY:")
+        ? `EXECUTION_FAIL_${detail.slice("TRADEABILITY:".length)}`
+        : `EXECUTION_FAIL_${detail}`;
+      const result = failResult({
+        reason,
+        buyOutAmount: null,
+        sellOutAmount: null,
+      });
+      console.info("[push] execution result", result);
+      return result;
+    }
+    const result = unknownResult(`EXECUTION_UNKNOWN_PROVIDER:${detail}`);
+    console.warn("[push] execution result", result);
+    return result;
   }
 }
