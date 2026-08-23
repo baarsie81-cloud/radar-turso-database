@@ -65,3 +65,40 @@ export type {
   SnapshotStage,
   TokenCaseEntry,
 } from "./domain/types";
+export {
+  HYPOTHESIS_EVENT_TYPES,
+  HYPOTHESIS_PUSH_EVENT_TYPES,
+  HYPOTHESIS_SCORE_VERSION,
+  HYPOTHESIS_SCORE_WEIGHTS,
+  HYPOTHESIS_STATUSES,
+  HYPOTHESIS_UNIVERSE_MAX,
+} from "./domain/hypothesis";
+export type {
+  HypothesisComponentScores,
+  HypothesisEventType,
+  HypothesisPushEventType,
+  HypothesisScoreWeights,
+  HypothesisStatus,
+} from "./domain/hypothesis";
+export {
+  claimHypothesisPushDelivery,
+  createHypothesisAsset,
+  getHypothesisAsset,
+  getHypothesisEvent,
+  hasHypothesisPushDelivery,
+  insertHypothesisEvent,
+  insertHypothesisScoreSnapshot,
+  listHypothesisAssetsByStatus,
+  listHypothesisEvents,
+  listHypothesisScoreSnapshots,
+} from "./db/repositories/hypothesis";
+export type {
+  CreateHypothesisAssetInput,
+  CreateHypothesisPushDeliveryInput,
+  HypothesisAssetRow,
+  HypothesisEventRow,
+  HypothesisPushDeliveryRow,
+  HypothesisScoreSnapshotRow,
+  InsertHypothesisEventInput,
+  InsertHypothesisScoreSnapshotInput,
+} from "./db/repositories/hypothesis";
