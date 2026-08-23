@@ -5,6 +5,8 @@ export default function HomePage() {
       <p>Standalone Turso application.</p>
       <p>
         <a href="/radar">Open radar</a>
+        {" · "}
+        <a href="/hypothesis">Open hypothesis</a>
       </p>
     </main>
   );
