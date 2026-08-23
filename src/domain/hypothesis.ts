@@ -21,6 +21,21 @@ export const HYPOTHESIS_STATUSES = ["WATCH", "ACTIVE", "INVALIDATED"] as const;
 
 export type HypothesisStatus = (typeof HYPOTHESIS_STATUSES)[number];
 
+/** Research category labels for hypothesis assets (not trade tags). */
+export const HYPOTHESIS_CATEGORIES = [
+  "AI",
+  "RWA",
+  "SOLANA_ECOSYSTEM",
+  "DEFI",
+  "INFRA",
+  "GAMING",
+  "MEME",
+  "L1",
+  "L2",
+] as const;
+
+export type HypothesisCategory = (typeof HYPOTHESIS_CATEGORIES)[number];
+
 export const HYPOTHESIS_EVENT_TYPES = [
   "ENTERED",
   "ACTIVATED",

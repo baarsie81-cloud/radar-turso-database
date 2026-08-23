@@ -66,6 +66,7 @@ export type {
   TokenCaseEntry,
 } from "./domain/types";
 export {
+  HYPOTHESIS_CATEGORIES,
   HYPOTHESIS_EVENT_TYPES,
   HYPOTHESIS_PUSH_EVENT_TYPES,
   HYPOTHESIS_REPLACEMENT_MARGIN,
@@ -76,6 +77,7 @@ export {
   HYPOTHESIS_UNIVERSE_SCORE_FLOOR,
 } from "./domain/hypothesis";
 export type {
+  HypothesisCategory,
   HypothesisComponentScores,
   HypothesisEventType,
   HypothesisPushEventType,

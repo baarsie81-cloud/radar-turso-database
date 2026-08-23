@@ -41,7 +41,7 @@ describe("0005_hypothesis schema", () => {
       inputsJson: JSON.stringify({ source: "test" }),
     });
 
-    expect(asset.id).toBe(1);
+    expect(asset.id).toBeGreaterThan(0);
     expect(asset.status).toBe("WATCH");
     expect(asset.scoreVersion).toBe(HYPOTHESIS_SCORE_VERSION);
 

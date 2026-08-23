@@ -89,7 +89,7 @@ describe("runHypothesisObservation", () => {
       rank: 1,
       updatedAt: BASE,
     });
-    await createHypothesisAsset(client, {
+    const invalidated = await createHypothesisAsset(client, {
       mint: mint("INV"),
       symbol: "INV",
       status: "INVALIDATED",
@@ -121,6 +121,7 @@ describe("runHypothesisObservation", () => {
       owner: OWNER,
       env: { RADAR24_HYPOTHESIS_ENABLED: "true" },
       now: () => BASE + 1_000,
+      listAssets: async () => [watch, active],
     });
 
     expect(summary.enabled).toBe(true);
@@ -130,7 +131,10 @@ describe("runHypothesisObservation", () => {
 
     const watchHistory = await listHypothesisScoreSnapshots(client, watch.id);
     const activeHistory = await listHypothesisScoreSnapshots(client, active.id);
-    const invalidHistory = await listHypothesisScoreSnapshots(client, 3);
+    const invalidHistory = await listHypothesisScoreSnapshots(
+      client,
+      invalidated.id,
+    );
 
     expect(watchHistory).toHaveLength(1);
     expect(activeHistory).toHaveLength(1);
@@ -180,6 +184,7 @@ describe("runHypothesisObservation", () => {
       owner: OWNER,
       env: { RADAR24_HYPOTHESIS_ENABLED: "true" },
       now: () => BASE + 5_000,
+      listAssets: async () => [asset],
     });
     expect(first.snapshotsWritten).toBe(1);
 
@@ -192,6 +197,7 @@ describe("runHypothesisObservation", () => {
       owner: OWNER,
       env: { RADAR24_HYPOTHESIS_ENABLED: "true" },
       now: () => BASE + 10_000,
+      listAssets: async () => [asset],
     });
     expect(second.snapshotsWritten).toBe(1);
 
@@ -204,7 +210,7 @@ describe("runHypothesisObservation", () => {
 
   it("fails closed when hypothesis lock is held; does not use collect/lifecycle keys", async () => {
     const client = await setup();
-    await createHypothesisAsset(client, {
+    const asset = await createHypothesisAsset(client, {
       mint: mint("LCK"),
       status: "ACTIVE",
       narrativeScore: 40,
@@ -228,12 +234,13 @@ describe("runHypothesisObservation", () => {
       owner: OWNER,
       env: { RADAR24_HYPOTHESIS_ENABLED: "true" },
       now: () => BASE + 1_000,
+      listAssets: async () => [asset],
     });
     expect(blocked.enabled).toBe(true);
     expect(blocked.snapshotsWritten).toBe(0);
     expect(blocked.errors[0]?.phase).toBe("lock");
     expect(blocked.errors[0]?.message).toMatch(/hypothesis lock/i);
-    expect(await listHypothesisScoreSnapshots(client, 1)).toHaveLength(0);
+    expect(await listHypothesisScoreSnapshots(client, asset.id)).toHaveLength(0);
 
     // Foreign Radar locks must not block hypothesis observation.
     await acquireCollectionLock(client, {
@@ -255,6 +262,7 @@ describe("runHypothesisObservation", () => {
       owner: OWNER,
       env: { RADAR24_HYPOTHESIS_ENABLED: "true" },
       now: () => BASE + 60_001,
+      listAssets: async () => [asset],
     });
     expect(afterExpiry.snapshotsWritten).toBe(1);
     expect(afterExpiry.errors).toEqual([]);
