@@ -15,11 +15,13 @@ export default function HypothesisPage() {
 
   return (
     <main style={{ padding: "1.5rem", fontFamily: "system-ui, sans-serif" }}>
-      <p style={{ margin: "0 0 0.75rem", fontSize: "0.9rem" }}>
+      <nav style={{ marginBottom: "0.75rem", fontSize: "0.9rem" }}>
         <Link href="/radar" style={{ color: "#333" }}>
-          ← Radar
+          Radar
         </Link>
-      </p>
+        {" · "}
+        <strong>Hypothesis</strong>
+      </nav>
 
       <header style={{ marginBottom: "0.5rem" }}>
         <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
