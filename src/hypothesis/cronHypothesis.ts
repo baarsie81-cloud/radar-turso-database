@@ -35,7 +35,11 @@ export async function handleHypothesisCron(request: Request): Promise<Response> 
   try {
     const sendObservationPush = createHypothesisObservationWebPushSender({
       getSubscriptions: () => getPushSubscriptions(client),
-      env: process.env,
+      env: {
+        VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
+        VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+        VAPID_SUBJECT: process.env.VAPID_SUBJECT,
+      },
     });
 
     const summary = await runHypothesisObservation({
