@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { HypothesisList, type HypothesisListRow } from "../../components/hypothesis-list";
 import { createTursoClient } from "../../src/db/client";
+import { migrate } from "../../src/db/migrate";
 import { listHypothesisUniverseAssets } from "../../src/db/repositories/hypothesis/assets";
 import { getLatestHypothesisScoreSnapshot } from "../../src/db/repositories/hypothesis/scoreSnapshots";
 import { RADAR_VERSION } from "../../src/domain/types";
@@ -20,6 +21,7 @@ async function loadHypothesisRows(): Promise<LoadResult> {
   try {
     const client = await createTursoClient();
     try {
+      await migrate(client);
       const assets = await listHypothesisUniverseAssets(client);
       const rows = await Promise.all(
         assets.map(async (asset): Promise<HypothesisListRow> => {
