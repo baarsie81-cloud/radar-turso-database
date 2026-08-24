@@ -12,6 +12,8 @@ import type {
   PushSendFn,
 } from "./types";
 
+const MAX_ROUND_TRIP_LOSS_PCT = 3;
+
 export type ExecutionGateFn = typeof validateJupiterExecution;
 
 export type ProcessPushDeliveriesDeps = {
@@ -48,7 +50,7 @@ function emptySummary(candidates = 0): PushDeliverySummary {
  * the stored strategy decision. Deduplicates by decision_id.
  *
  * Execution statuses:
- * - EXECUTION_PASS → push may proceed
+ * - EXECUTION_PASS → push may proceed only when round-trip loss <= 3%
  * - EXECUTION_FAIL → block push (proven untradeable)
  * - EXECUTION_UNKNOWN → no push; inconclusive provider/tech error (not a bad token)
  */
@@ -98,6 +100,31 @@ export async function processPushDeliveries(
         decisionId: candidate.decisionId,
         mint: candidate.mint,
         executionStatus: "EXECUTION_FAIL",
+        pushDecision: "BLOCK",
+        blockReason,
+      });
+      continue;
+    }
+
+    if (
+      execution.roundTripLossPct == null
+      || !Number.isFinite(execution.roundTripLossPct)
+      || execution.roundTripLossPct > MAX_ROUND_TRIP_LOSS_PCT
+    ) {
+      const blockReason = execution.roundTripLossPct == null
+        ? "EXECUTION_FAIL_ROUND_TRIP_LOSS_UNKNOWN"
+        : `EXECUTION_FAIL_ROUND_TRIP_LOSS_${execution.roundTripLossPct.toFixed(4)}pct`;
+      summary.skipped += 1;
+      summary.errors.push({
+        decisionId: candidate.decisionId,
+        message: blockReason,
+      });
+      console.info("[push] execution FAIL", {
+        decisionId: candidate.decisionId,
+        mint: candidate.mint,
+        executionStatus: execution.status,
+        roundTripLossPct: execution.roundTripLossPct,
+        maxRoundTripLossPct: MAX_ROUND_TRIP_LOSS_PCT,
         pushDecision: "BLOCK",
         blockReason,
       });
