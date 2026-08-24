@@ -1,5 +1,5 @@
 import { createTursoClient } from "../db/client";
-import { migrate } from "../db/migrate";
+import { ensureHypothesisSchema } from "../db/ensureHypothesisSchema";
 import { getPushSubscriptions } from "../db/repositories/push";
 import {
   createHypothesisObservationWebPushSender,
@@ -34,10 +34,7 @@ export async function handleHypothesisCron(request: Request): Promise<Response> 
 
   const client = await createTursoClient();
   try {
-    const migrations = await migrate(client);
-    if (migrations.length > 0) {
-      console.info("[hypothesis] applied migrations", { migrations });
-    }
+    await ensureHypothesisSchema(client);
 
     const sendObservationPush = createHypothesisObservationWebPushSender({
       getSubscriptions: () => getPushSubscriptions(client),
