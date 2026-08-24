@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/push",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/hypothesis",
+      "schedule": "*/30 * * * *"
     }
   ]
 }
