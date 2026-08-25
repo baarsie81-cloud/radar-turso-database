@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 type BaseRow = {
   id: number;
   symbol: string | null;
+  tokenAddress: string | null;
   poolAddress: string;
   firstSeenAt: number;
   entryLiquidityUsd: number;
@@ -27,6 +28,7 @@ async function loadRows(): Promise<{ rows: BaseRow[]; error: string | null }> {
     await client.execute(`CREATE TABLE IF NOT EXISTS base_radar_cases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       pool_address TEXT NOT NULL UNIQUE,
+      token_address TEXT,
       symbol TEXT,
       launched_at INTEGER NOT NULL,
       first_seen_at INTEGER NOT NULL,
@@ -37,8 +39,12 @@ async function loadRows(): Promise<{ rows: BaseRow[]; error: string | null }> {
       entry_sells_h1 INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','CLOSED'))
     )`);
+    const columns = await client.execute("PRAGMA table_info(base_radar_cases)");
+    if (!columns.rows.some((row) => String(row.name) === "token_address")) {
+      await client.execute("ALTER TABLE base_radar_cases ADD COLUMN token_address TEXT");
+    }
     const result = await client.execute(`
-      SELECT c.id, c.symbol, c.pool_address, c.first_seen_at, c.entry_liquidity_usd, c.status,
+      SELECT c.id, c.symbol, c.token_address, c.pool_address, c.first_seen_at, c.entry_liquidity_usd, c.status,
              d.plus5_roi_pct, d.plus10_roi_pct, d.momentum_5_to_10_pct,
              d.plus10_liquidity_usd, d.status AS decision, d.reject_reason
       FROM base_radar_cases c
@@ -50,6 +56,7 @@ async function loadRows(): Promise<{ rows: BaseRow[]; error: string | null }> {
       rows: result.rows.map((row) => ({
         id: Number(row.id),
         symbol: row.symbol == null ? null : String(row.symbol),
+        tokenAddress: row.token_address == null ? null : String(row.token_address),
         poolAddress: String(row.pool_address),
         firstSeenAt: Number(row.first_seen_at),
         entryLiquidityUsd: Number(row.entry_liquidity_usd),
@@ -74,6 +81,11 @@ function pct(value: number | null): string {
   return value == null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
 }
 
+function shortAddress(address: string | null): string {
+  if (!address) return "pending";
+  return `${address.slice(0, 8)}…${address.slice(-6)}`;
+}
+
 export default async function RadarPage() {
   const fetchedAt = Date.now();
   const { rows, error } = await loadRows();
@@ -81,12 +93,15 @@ export default async function RadarPage() {
   const pending = rows.filter((row) => row.decision == null).length;
 
   return (
-    <main style={{ padding: "1.5rem", fontFamily: "system-ui, sans-serif", maxWidth: 1200, margin: "0 auto" }}>
+    <main style={{ padding: "1.5rem", fontFamily: "system-ui, sans-serif", maxWidth: 1300, margin: "0 auto" }}>
       <header style={{ marginBottom: "1rem" }}>
         <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>Moonshot Radar · Base only · Research Mode</p>
         <h1 style={{ margin: "0.25rem 0" }}>Base Radar</h1>
         <p style={{ margin: "0.25rem 0", color: "#555" }}>
           Admission: ≤15m oud, ≥$10k entry liquidity + echte activiteit · PASS: +10 ≥25%, momentum ≥0, +10 liquidity ≥$15k.
+        </p>
+        <p style={{ margin: "0.25rem 0", color: "#555", fontSize: "0.9rem" }}>
+          Token address = het 0x-contract dat je rechtstreeks in Uniswap op Base kunt plakken.
         </p>
         <RadarRefreshBar fetchedAt={fetchedAt} />
       </header>
@@ -105,7 +120,7 @@ export default async function RadarPage() {
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.9rem" }}>
           <thead>
             <tr>
-              {['Coin','Seen','Entry liq','+5','+10','Momentum','+10 liq','Decision'].map((label) => (
+              {['Coin','Token address','Seen','Entry liq','+5','+10','Momentum','+10 liq','Decision'].map((label) => (
                 <th key={label} style={{ textAlign: "left", padding: "0.55rem", borderBottom: "1px solid #ddd" }}>{label}</th>
               ))}
             </tr>
@@ -114,6 +129,11 @@ export default async function RadarPage() {
             {rows.map((row) => (
               <tr key={row.id}>
                 <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }}>{row.symbol ?? row.poolAddress.slice(0, 10)}</td>
+                <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee", fontFamily: "monospace" }}>
+                  {row.tokenAddress ? (
+                    <span title={row.tokenAddress} style={{ userSelect: "all", cursor: "text" }}>{shortAddress(row.tokenAddress)}</span>
+                  ) : 'pending'}
+                </td>
                 <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }}>{new Date(row.firstSeenAt).toLocaleString()}</td>
                 <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }}>${Math.round(row.entryLiquidityUsd).toLocaleString()}</td>
                 <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }}>{pct(row.plus5RoiPct)}</td>
