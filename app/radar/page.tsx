@@ -16,10 +16,7 @@ async function loadRows(): Promise<{ rows: BaseRadarTableRow[]; error: string | 
              d.plus10_liquidity_usd, d.status AS decision, d.reject_reason
       FROM base_radar_cases c
       LEFT JOIN base_radar_decisions d ON d.case_id = c.id
-      ORDER BY
-        CASE d.status WHEN 'PASS' THEN 0 WHEN 'REJECT' THEN 2 ELSE 1 END ASC,
-        CASE WHEN d.status = 'PASS' THEN d.plus10_roi_pct END DESC,
-        c.first_seen_at DESC
+      ORDER BY c.first_seen_at DESC, c.id DESC
       LIMIT 200
     `);
     return {
@@ -61,7 +58,7 @@ export default async function RadarPage() {
           Admission: ≤15m oud, ≥$10k entry liquidity + echte activiteit · PASS: +10 ≥25%, momentum ≥0, +10 liquidity ≥$15k.
         </p>
         <p style={{ margin: "0.25rem 0", color: "#555", fontSize: "0.9rem" }}>
-          Copy plakt het echte Base-tokencontract naar je klembord voor Uniswap. Klik op de coin voor de volledige case.
+          Nieuwste cases staan bovenaan. PASS blijft zichtbaar in de Decision-kolom. Copy plakt het echte Base-tokencontract naar je klembord voor Uniswap.
         </p>
         <RadarRefreshBar fetchedAt={fetchedAt} />
       </header>
