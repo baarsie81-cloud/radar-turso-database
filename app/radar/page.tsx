@@ -1,60 +1,23 @@
 import { createTursoClient } from "../../src/db/client";
 import { PushSettings } from "../../components/push-settings";
 import { RadarRefreshBar } from "../../components/radar-refresh";
+import { BaseRadarTable, type BaseRadarTableRow } from "../../components/base-radar-table";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-type BaseRow = {
-  id: number;
-  symbol: string | null;
-  tokenAddress: string | null;
-  poolAddress: string;
-  firstSeenAt: number;
-  entryLiquidityUsd: number;
-  status: string;
-  plus5RoiPct: number | null;
-  plus10RoiPct: number | null;
-  momentum: number | null;
-  plus10LiquidityUsd: number | null;
-  decision: string | null;
-  rejectReason: string | null;
-};
-
-async function loadRows(): Promise<{ rows: BaseRow[]; error: string | null }> {
+async function loadRows(): Promise<{ rows: BaseRadarTableRow[]; error: string | null }> {
   if (!process.env.TURSO_DATABASE_URL) return { rows: [], error: "Turso is not configured." };
   const client = await createTursoClient();
   try {
-    await client.execute(`CREATE TABLE IF NOT EXISTS base_radar_cases (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      pool_address TEXT NOT NULL UNIQUE,
-      token_address TEXT,
-      symbol TEXT,
-      launched_at INTEGER NOT NULL,
-      first_seen_at INTEGER NOT NULL,
-      entry_price REAL NOT NULL,
-      entry_liquidity_usd REAL NOT NULL,
-      entry_volume_h1_usd REAL,
-      entry_buys_h1 INTEGER NOT NULL DEFAULT 0,
-      entry_sells_h1 INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','CLOSED'))
-    )`);
-    const columns = await client.execute("PRAGMA table_info(base_radar_cases)");
-    if (!columns.rows.some((row) => String(row.name) === "token_address")) {
-      await client.execute("ALTER TABLE base_radar_cases ADD COLUMN token_address TEXT");
-    }
     const result = await client.execute(`
-      SELECT c.id, c.symbol, c.token_address, c.pool_address, c.first_seen_at, c.entry_liquidity_usd, c.status,
+      SELECT c.id, c.symbol, c.token_address, c.pool_address, c.first_seen_at, c.entry_liquidity_usd,
              d.plus5_roi_pct, d.plus10_roi_pct, d.momentum_5_to_10_pct,
              d.plus10_liquidity_usd, d.status AS decision, d.reject_reason
       FROM base_radar_cases c
       LEFT JOIN base_radar_decisions d ON d.case_id = c.id
       ORDER BY
-        CASE d.status
-          WHEN 'PASS' THEN 0
-          WHEN 'REJECT' THEN 2
-          ELSE 1
-        END ASC,
+        CASE d.status WHEN 'PASS' THEN 0 WHEN 'REJECT' THEN 2 ELSE 1 END ASC,
         CASE WHEN d.status = 'PASS' THEN d.plus10_roi_pct END DESC,
         c.first_seen_at DESC
       LIMIT 200
@@ -67,7 +30,6 @@ async function loadRows(): Promise<{ rows: BaseRow[]; error: string | null }> {
         poolAddress: String(row.pool_address),
         firstSeenAt: Number(row.first_seen_at),
         entryLiquidityUsd: Number(row.entry_liquidity_usd),
-        status: String(row.status),
         plus5RoiPct: row.plus5_roi_pct == null ? null : Number(row.plus5_roi_pct),
         plus10RoiPct: row.plus10_roi_pct == null ? null : Number(row.plus10_roi_pct),
         momentum: row.momentum_5_to_10_pct == null ? null : Number(row.momentum_5_to_10_pct),
@@ -82,15 +44,6 @@ async function loadRows(): Promise<{ rows: BaseRow[]; error: string | null }> {
   } finally {
     client.close();
   }
-}
-
-function pct(value: number | null): string {
-  return value == null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
-}
-
-function shortAddress(address: string | null): string {
-  if (!address) return "pending";
-  return `${address.slice(0, 8)}…${address.slice(-6)}`;
 }
 
 export default async function RadarPage() {
@@ -108,7 +61,7 @@ export default async function RadarPage() {
           Admission: ≤15m oud, ≥$10k entry liquidity + echte activiteit · PASS: +10 ≥25%, momentum ≥0, +10 liquidity ≥$15k.
         </p>
         <p style={{ margin: "0.25rem 0", color: "#555", fontSize: "0.9rem" }}>
-          Token address = het 0x-contract dat je rechtstreeks in Uniswap op Base kunt plakken. Sortering: PASS → PENDING → REJECT; binnen de groep meest relevant/vers bovenaan.
+          Copy plakt het echte Base-tokencontract naar je klembord voor Uniswap. Klik op de coin voor de volledige case.
         </p>
         <RadarRefreshBar fetchedAt={fetchedAt} />
       </header>
@@ -121,38 +74,7 @@ export default async function RadarPage() {
         <span>{pending} pending</span>
       </section>
 
-      {error ? <p role="alert">Turso error: {error}</p> : null}
-
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.9rem" }}>
-          <thead>
-            <tr>
-              {['Coin','Token address','Seen','Entry liq','+5','+10','Momentum','+10 liq','Decision'].map((label) => (
-                <th key={label} style={{ textAlign: "left", padding: "0.55rem", borderBottom: "1px solid #ddd" }}>{label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id}>
-                <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }}>{row.symbol ?? row.poolAddress.slice(0, 10)}</td>
-                <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee", fontFamily: "monospace" }}>
-                  {row.tokenAddress ? (
-                    <span title={row.tokenAddress} style={{ userSelect: "all", cursor: "text" }}>{shortAddress(row.tokenAddress)}</span>
-                  ) : 'pending'}
-                </td>
-                <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }}>{new Date(row.firstSeenAt).toLocaleString()}</td>
-                <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }}>${Math.round(row.entryLiquidityUsd).toLocaleString()}</td>
-                <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }}>{pct(row.plus5RoiPct)}</td>
-                <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }}>{pct(row.plus10RoiPct)}</td>
-                <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }}>{pct(row.momentum)}</td>
-                <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }}>{row.plus10LiquidityUsd == null ? '—' : `$${Math.round(row.plus10LiquidityUsd).toLocaleString()}`}</td>
-                <td style={{ padding: "0.55rem", borderBottom: "1px solid #eee" }} title={row.rejectReason ?? undefined}>{row.decision ?? 'PENDING'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {error ? <p role="alert">Turso error: {error}</p> : <BaseRadarTable rows={rows} />}
     </main>
   );
 }
