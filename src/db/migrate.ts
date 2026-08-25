@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Client } from "@libsql/client";
 import { createTursoClient } from "./client";
-import { seedHypothesisUniverse } from "../hypothesis/seedUniverse";
 
 const MIGRATIONS_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -43,9 +42,6 @@ export async function migrate(client: Client): Promise<string[]> {
     });
     ran.push(version);
   }
-
-  // Idempotent research seed (WATCH universe). Safe on every migrate.
-  await seedHypothesisUniverse(client);
 
   return ran;
 }
