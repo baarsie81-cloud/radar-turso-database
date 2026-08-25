@@ -210,10 +210,12 @@ async function discoverAndAdmit(client: Client, now: number): Promise<{ offered:
   let admittedCount = 0;
   for (const pool of pools.slice(0, MAX_NEW_CASES_PER_RUN)) {
     const result = await client.execute({
-      sql: `INSERT OR IGNORE INTO base_radar_cases
+      sql: `INSERT INTO base_radar_cases
         (pool_address, token_address, dex_id, symbol, launched_at, first_seen_at, entry_price, entry_liquidity_usd,
          entry_volume_h1_usd, entry_buys_h1, entry_sells_h1)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(pool_address) DO NOTHING
+        RETURNING id`,
       args: [
         pool.address,
         pool.tokenAddress,
@@ -228,9 +230,11 @@ async function discoverAndAdmit(client: Client, now: number): Promise<{ offered:
         pool.sellsH1,
       ],
     });
-    if (result.rowsAffected === 0) continue;
-    const idResult = await client.execute("SELECT last_insert_rowid() AS id");
-    const caseId = Number(idResult.rows[0]?.id);
+    if (result.rows.length === 0) continue;
+    const caseId = Number(result.rows[0]?.id);
+    if (!Number.isInteger(caseId) || caseId <= 0) {
+      throw new Error("BASE_ADMISSION_INVALID_CASE_ID");
+    }
     await client.execute({
       sql: `INSERT INTO base_radar_snapshots
         (case_id, stage, captured_at, price, liquidity_usd, volume_h1_usd, buys_h1, sells_h1)
