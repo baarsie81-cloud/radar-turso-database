@@ -1,22 +1,6 @@
 {
   "crons": [
     {
-      "path": "/api/cron/collect",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/lifecycle",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/push",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/survivor",
-      "schedule": "*/5 * * * *"
-    },
-    {
       "path": "/api/cron/base-radar",
       "schedule": "*/5 * * * *"
     }
