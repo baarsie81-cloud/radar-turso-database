@@ -9,7 +9,7 @@ function num(value: unknown): number | null {
 export async function GET() {
   const now = Date.now();
   const pages = [] as any[];
-  for (const page of [1, 2, 3, 4, 5]) {
+  for (const page of [10, 15, 20, 25, 30]) {
     const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/solana/new_pools?page=${page}`, {
       headers: { accept: "application/json" },
       cache: "no-store",
