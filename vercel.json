@@ -23,6 +23,10 @@
     {
       "path": "/api/cron/survivor",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/base-radar",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
