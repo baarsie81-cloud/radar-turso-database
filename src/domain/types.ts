@@ -105,7 +105,8 @@ export type DecisionResult = {
   decisionStage: SnapshotStage;
   decidedAt: number;
   decisionStatus: DecisionStatus;
-  rejectReason: RejectReason | null;
+  /** Core strategy reasons are typed by RejectReason; downstream execution gates may add explicit execution reasons. */
+  rejectReason: string | null;
   radarVersion: string;
   entryPrice: number | null;
   plus5RoiPct: number | null;
