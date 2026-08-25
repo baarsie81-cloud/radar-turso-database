@@ -1,6 +1,12 @@
 import type { DecisionResult, SnapshotStage } from "../../domain/types";
 
-export const SURVIVOR_CHAINS = ["SOLANA", "BNB"] as const;
+export const SURVIVOR_CHAINS = [
+  "SOLANA",
+  "BNB",
+  "BASE",
+  "MONAD",
+  "ARBITRUM",
+] as const;
 export type SurvivorChain = (typeof SURVIVOR_CHAINS)[number];
 
 export const SURVIVAL_HORIZONS_MINUTES = [60, 360, 1440] as const;
