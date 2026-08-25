@@ -1,10 +1,12 @@
 import type { Client } from "@libsql/client";
 import { createTursoClient } from "../../db/client";
+import type { SurvivorChain } from "./types";
 
 const NETWORKS = [
-  { chain: "SOLANA", network: "solana" },
-  { chain: "BNB", network: "bsc" },
-] as const;
+  { chain: "BASE", network: "base" },
+  { chain: "MONAD", network: "monad" },
+  { chain: "ARBITRUM", network: "arbitrum" },
+] as const satisfies ReadonlyArray<{ chain: SurvivorChain; network: string }>;
 
 const MAX_ACTIVE_PER_CHAIN = 8;
 const MIN_SURVIVAL_LIQUIDITY_USD = 15_000;
@@ -28,7 +30,7 @@ type Pool = {
 
 type CaseRow = {
   id: number;
-  chain: "SOLANA" | "BNB";
+  chain: SurvivorChain;
   network: string;
   poolAddress: string;
   firstSeenAt: number;
@@ -100,9 +102,9 @@ async function fetchPools(
 
 async function ensureSchema(client: Client): Promise<void> {
   await client.batch([
-    `CREATE TABLE IF NOT EXISTS survivor_research_cases (
+    `CREATE TABLE IF NOT EXISTS survivor_research_cases_v2 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      chain TEXT NOT NULL CHECK (chain IN ('SOLANA','BNB')),
+      chain TEXT NOT NULL CHECK (chain IN ('BASE','MONAD','ARBITRUM')),
       network TEXT NOT NULL,
       pool_address TEXT NOT NULL,
       symbol TEXT,
@@ -113,18 +115,18 @@ async function ensureSchema(client: Client): Promise<void> {
       status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','CLOSED')),
       UNIQUE(chain, pool_address)
     )`,
-    `CREATE TABLE IF NOT EXISTS survivor_research_snapshots (
+    `CREATE TABLE IF NOT EXISTS survivor_research_snapshots_v2 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      case_id INTEGER NOT NULL REFERENCES survivor_research_cases(id) ON DELETE CASCADE,
+      case_id INTEGER NOT NULL REFERENCES survivor_research_cases_v2(id) ON DELETE CASCADE,
       stage TEXT NOT NULL,
       captured_at INTEGER NOT NULL,
       price REAL NOT NULL,
       liquidity_usd REAL,
       UNIQUE(case_id, stage)
     )`,
-    `CREATE TABLE IF NOT EXISTS survivor_research_checks (
+    `CREATE TABLE IF NOT EXISTS survivor_research_checks_v2 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      case_id INTEGER NOT NULL REFERENCES survivor_research_cases(id) ON DELETE CASCADE,
+      case_id INTEGER NOT NULL REFERENCES survivor_research_cases_v2(id) ON DELETE CASCADE,
       horizon_minutes INTEGER NOT NULL,
       captured_at INTEGER NOT NULL,
       tradeable INTEGER NOT NULL CHECK (tradeable IN (0,1)),
@@ -144,7 +146,7 @@ async function seedNewCases(client: Client, now: number): Promise<number> {
   let inserted = 0;
   for (const source of NETWORKS) {
     const countResult = await client.execute({
-      sql: "SELECT COUNT(*) AS count FROM survivor_research_cases WHERE chain = ? AND status = 'ACTIVE'",
+      sql: "SELECT COUNT(*) AS count FROM survivor_research_cases_v2 WHERE chain = ? AND status = 'ACTIVE'",
       args: [source.chain],
     });
     const active = Number(countResult.rows[0]?.count ?? 0);
@@ -160,7 +162,7 @@ async function seedNewCases(client: Client, now: number): Promise<number> {
     for (const pool of eligible) {
       if (insertedForChain >= slots) break;
       const result = await client.execute({
-        sql: `INSERT OR IGNORE INTO survivor_research_cases
+        sql: `INSERT OR IGNORE INTO survivor_research_cases_v2
           (chain, network, pool_address, symbol, launched_at, first_seen_at, entry_price, entry_liquidity_usd)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
@@ -178,7 +180,7 @@ async function seedNewCases(client: Client, now: number): Promise<number> {
         const idResult = await client.execute("SELECT last_insert_rowid() AS id");
         const caseId = Number(idResult.rows[0]?.id);
         await client.execute({
-          sql: `INSERT OR IGNORE INTO survivor_research_snapshots
+          sql: `INSERT OR IGNORE INTO survivor_research_snapshots_v2
             (case_id, stage, captured_at, price, liquidity_usd) VALUES (?, 'INITIAL', ?, ?, ?)`,
           args: [caseId, now, pool.price, pool.liquidityUsd],
         });
@@ -192,11 +194,11 @@ async function seedNewCases(client: Client, now: number): Promise<number> {
 
 async function listActiveCases(client: Client): Promise<CaseRow[]> {
   const result = await client.execute(
-    "SELECT id, chain, network, pool_address, first_seen_at FROM survivor_research_cases WHERE status = 'ACTIVE' ORDER BY id",
+    "SELECT id, chain, network, pool_address, first_seen_at FROM survivor_research_cases_v2 WHERE status = 'ACTIVE' ORDER BY id",
   );
   return result.rows.map((row) => ({
     id: Number(row.id),
-    chain: String(row.chain) as CaseRow["chain"],
+    chain: String(row.chain) as SurvivorChain,
     network: String(row.network),
     poolAddress: String(row.pool_address),
     firstSeenAt: Number(row.first_seen_at),
@@ -214,7 +216,7 @@ async function observeCase(
   for (const [stage, dueMinutes] of STAGES) {
     if (ageMinutes < dueMinutes) continue;
     await client.execute({
-      sql: `INSERT OR IGNORE INTO survivor_research_snapshots
+      sql: `INSERT OR IGNORE INTO survivor_research_snapshots_v2
         (case_id, stage, captured_at, price, liquidity_usd) VALUES (?, ?, ?, ?, ?)`,
       args: [row.id, stage, now, pool.price, pool.liquidityUsd],
     });
@@ -226,7 +228,7 @@ async function observeCase(
       && pool.liquidityUsd != null
       && pool.liquidityUsd >= MIN_SURVIVAL_LIQUIDITY_USD;
     await client.execute({
-      sql: `INSERT OR IGNORE INTO survivor_research_checks
+      sql: `INSERT OR IGNORE INTO survivor_research_checks_v2
         (case_id, horizon_minutes, captured_at, tradeable, liquidity_usd) VALUES (?, ?, ?, ?, ?)`,
       args: [row.id, horizonMinutes, now, tradeable ? 1 : 0, pool.liquidityUsd],
     });
@@ -234,7 +236,7 @@ async function observeCase(
 
   if (ageMinutes >= 1440) {
     await client.execute({
-      sql: "UPDATE survivor_research_cases SET status = 'CLOSED' WHERE id = ?",
+      sql: "UPDATE survivor_research_cases_v2 SET status = 'CLOSED' WHERE id = ?",
       args: [row.id],
     });
   }
@@ -285,10 +287,11 @@ export async function runSurvivorResearchCron(): Promise<Record<string, unknown>
   const counts = await client.execute(
     `SELECT chain, COUNT(*) AS cases,
       SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active
-     FROM survivor_research_cases GROUP BY chain`,
+     FROM survivor_research_cases_v2 GROUP BY chain`,
   );
   const summary = {
     enabled: true,
+    activeChains: NETWORKS.map((source) => source.chain),
     discovered,
     observed,
     minSurvivalLiquidityUsd: MIN_SURVIVAL_LIQUIDITY_USD,
