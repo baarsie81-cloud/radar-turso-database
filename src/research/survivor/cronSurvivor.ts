@@ -80,11 +80,22 @@ async function discoverPools(network: string): Promise<Pool[]> {
     : [];
 }
 
-async function fetchPool(network: string, poolAddress: string): Promise<Pool | null> {
+async function fetchPools(
+  network: string,
+  poolAddresses: string[],
+): Promise<Map<string, Pool>> {
+  if (poolAddresses.length === 0) {
+    return new Map();
+  }
+
+  const encodedAddresses = poolAddresses.map(encodeURIComponent).join(",");
   const json = await fetchJson(
-    `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${poolAddress}`,
+    `https://api.geckoterminal.com/api/v2/networks/${network}/pools/multi/${encodedAddresses}`,
   );
-  return poolFromResource(json?.data);
+  const pools = Array.isArray(json?.data)
+    ? json.data.map(poolFromResource).filter((pool: Pool | null): pool is Pool => pool != null)
+    : [];
+  return new Map(pools.map((pool) => [pool.address.toLowerCase(), pool]));
 }
 
 async function ensureSchema(client: Client): Promise<void> {
@@ -145,8 +156,9 @@ async function seedNewCases(client: Client, now: number): Promise<number> {
       .filter((pool) => now - pool.createdAt >= 0 && now - pool.createdAt <= MAX_DISCOVERY_AGE_MS)
       .sort((a, b) => b.createdAt - a.createdAt);
 
+    let insertedForChain = 0;
     for (const pool of eligible) {
-      if (inserted >= MAX_ACTIVE_PER_CHAIN * NETWORKS.length) break;
+      if (insertedForChain >= slots) break;
       const result = await client.execute({
         sql: `INSERT OR IGNORE INTO survivor_research_cases
           (chain, network, pool_address, symbol, launched_at, first_seen_at, entry_price, entry_liquidity_usd)
@@ -171,7 +183,7 @@ async function seedNewCases(client: Client, now: number): Promise<number> {
           args: [caseId, now, pool.price, pool.liquidityUsd],
         });
         inserted += 1;
-        if (inserted >= slots) break;
+        insertedForChain += 1;
       }
     }
   }
@@ -191,9 +203,12 @@ async function listActiveCases(client: Client): Promise<CaseRow[]> {
   }));
 }
 
-async function observeCase(client: Client, row: CaseRow, now: number): Promise<void> {
-  const pool = await fetchPool(row.network, row.poolAddress);
-  if (!pool) return;
+async function observeCase(
+  client: Client,
+  row: CaseRow,
+  pool: Pool,
+  now: number,
+): Promise<void> {
   const ageMinutes = (now - row.firstSeenAt) / 60_000;
 
   for (const [stage, dueMinutes] of STAGES) {
@@ -234,15 +249,36 @@ export async function runSurvivorResearchCron(): Promise<Record<string, unknown>
   const errors: Array<{ caseId: number; message: string }> = [];
   let observed = 0;
 
-  for (const row of active) {
+  for (const source of NETWORKS) {
+    const rows = active.filter((row) => row.chain === source.chain);
+    if (rows.length === 0) continue;
+
     try {
-      await observeCase(client, row, now);
-      observed += 1;
+      const pools = await fetchPools(
+        source.network,
+        rows.map((row) => row.poolAddress),
+      );
+      for (const row of rows) {
+        const pool = pools.get(row.poolAddress.toLowerCase());
+        if (!pool) {
+          errors.push({ caseId: row.id, message: "Pool missing from GeckoTerminal batch response" });
+          continue;
+        }
+        try {
+          await observeCase(client, row, pool, now);
+          observed += 1;
+        } catch (error) {
+          errors.push({
+            caseId: row.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     } catch (error) {
-      errors.push({
-        caseId: row.id,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      for (const row of rows) {
+        errors.push({ caseId: row.id, message });
+      }
     }
   }
 
