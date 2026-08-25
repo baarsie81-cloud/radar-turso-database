@@ -23,6 +23,7 @@ const OUTCOME_HORIZONS = [360, 1440] as const;
 type Pool = {
   address: string;
   tokenAddress: string | null;
+  dexId: string | null;
   name: string | null;
   createdAt: number;
   price: number;
@@ -36,6 +37,7 @@ type CaseRow = {
   id: number;
   poolAddress: string;
   tokenAddress: string | null;
+  dexId: string | null;
   symbol: string | null;
   launchedAt: number;
   firstSeenAt: number;
@@ -55,6 +57,15 @@ function tokenAddressFromResource(resource: any): string | null {
   return /^0x[a-fA-F0-9]{40}$/.test(address) ? address : null;
 }
 
+function dexIdFromResource(resource: any): string | null {
+  const id = resource?.relationships?.dex?.data?.id;
+  return typeof id === "string" && id.trim() ? id.trim().toLowerCase() : null;
+}
+
+function isUniswapDex(dexId: string | null): boolean {
+  return dexId != null && dexId.includes("uniswap");
+}
+
 function poolFromResource(resource: any): Pool | null {
   const attributes = resource?.attributes ?? {};
   const address = typeof attributes.address === "string"
@@ -70,6 +81,7 @@ function poolFromResource(resource: any): Pool | null {
   return {
     address,
     tokenAddress: tokenAddressFromResource(resource),
+    dexId: dexIdFromResource(resource),
     name: typeof attributes.name === "string" ? attributes.name : null,
     createdAt,
     price,
@@ -116,6 +128,7 @@ async function ensureSchema(client: Client): Promise<void> {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       pool_address TEXT NOT NULL UNIQUE,
       token_address TEXT,
+      dex_id TEXT,
       symbol TEXT,
       launched_at INTEGER NOT NULL,
       first_seen_at INTEGER NOT NULL,
@@ -167,9 +180,9 @@ async function ensureSchema(client: Client): Promise<void> {
   ], "write");
 
   const columns = await client.execute("PRAGMA table_info(base_radar_cases)");
-  if (!columns.rows.some((row) => String(row.name) === "token_address")) {
-    await client.execute("ALTER TABLE base_radar_cases ADD COLUMN token_address TEXT");
-  }
+  const names = new Set(columns.rows.map((row) => String(row.name)));
+  if (!names.has("token_address")) await client.execute("ALTER TABLE base_radar_cases ADD COLUMN token_address TEXT");
+  if (!names.has("dex_id")) await client.execute("ALTER TABLE base_radar_cases ADD COLUMN dex_id TEXT");
 }
 
 function firstSymbol(name: string | null): string | null {
@@ -198,12 +211,13 @@ async function discoverAndAdmit(client: Client, now: number): Promise<{ offered:
   for (const pool of pools.slice(0, MAX_NEW_CASES_PER_RUN)) {
     const result = await client.execute({
       sql: `INSERT OR IGNORE INTO base_radar_cases
-        (pool_address, token_address, symbol, launched_at, first_seen_at, entry_price, entry_liquidity_usd,
+        (pool_address, token_address, dex_id, symbol, launched_at, first_seen_at, entry_price, entry_liquidity_usd,
          entry_volume_h1_usd, entry_buys_h1, entry_sells_h1)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         pool.address,
         pool.tokenAddress,
+        pool.dexId,
         firstSymbol(pool.name),
         pool.createdAt,
         now,
@@ -233,6 +247,7 @@ function mapCase(row: Row): CaseRow {
     id: Number(row.id),
     poolAddress: String(row.pool_address),
     tokenAddress: row.token_address == null ? null : String(row.token_address),
+    dexId: row.dex_id == null ? null : String(row.dex_id),
     symbol: row.symbol == null ? null : String(row.symbol),
     launchedAt: Number(row.launched_at),
     firstSeenAt: Number(row.first_seen_at),
@@ -249,12 +264,16 @@ async function listActive(client: Client): Promise<CaseRow[]> {
 }
 
 async function writeDueSnapshots(client: Client, row: CaseRow, pool: Pool, now: number): Promise<void> {
-  if (!row.tokenAddress && pool.tokenAddress) {
+  if ((!row.tokenAddress && pool.tokenAddress) || (!row.dexId && pool.dexId)) {
     await client.execute({
-      sql: "UPDATE base_radar_cases SET token_address = ? WHERE id = ? AND token_address IS NULL",
-      args: [pool.tokenAddress, row.id],
+      sql: `UPDATE base_radar_cases SET
+        token_address = COALESCE(token_address, ?),
+        dex_id = COALESCE(dex_id, ?)
+        WHERE id = ?`,
+      args: [pool.tokenAddress, pool.dexId, row.id],
     });
-    row.tokenAddress = pool.tokenAddress;
+    if (!row.tokenAddress && pool.tokenAddress) row.tokenAddress = pool.tokenAddress;
+    if (!row.dexId && pool.dexId) row.dexId = pool.dexId;
   }
 
   const ageMinutes = (now - row.firstSeenAt) / 60_000;
@@ -320,13 +339,16 @@ async function evaluateDueCase(client: Client, row: CaseRow): Promise<{ status: 
 
   const plus10Liquidity = asNumber(p10.liquidity_usd);
   const strategyPass = decision.decisionStatus === "PASS";
-  const executionPass = plus10Liquidity != null && plus10Liquidity >= MIN_PLUS10_LIQUIDITY_USD;
-  const finalStatus = strategyPass && executionPass ? "PASS" : "REJECT";
+  const liquidityPass = plus10Liquidity != null && plus10Liquidity >= MIN_PLUS10_LIQUIDITY_USD;
+  const uniswapPass = isUniswapDex(row.dexId);
+  const finalStatus = strategyPass && liquidityPass && uniswapPass ? "PASS" : "REJECT";
   const rejectReason = !strategyPass
     ? decision.rejectReason
-    : !executionPass
+    : !liquidityPass
       ? "LIQUIDITY_BELOW_15000_AT_PLUS_10"
-      : null;
+      : !uniswapPass
+        ? "EXECUTION_FAIL_NOT_UNISWAP_POOL"
+        : null;
 
   await client.execute({
     sql: `INSERT INTO base_radar_decisions
@@ -359,7 +381,7 @@ async function evaluateDueCase(client: Client, row: CaseRow): Promise<{ status: 
   const payload: PushPayload = {
     title: "🚀 Base Radar · Research",
     body: `${row.symbol ?? "BASE token"} | +10 ${decision.plus10RoiPct?.toFixed(1) ?? "?"}% | momentum ${decision.momentum5To10Pct?.toFixed(1) ?? "?"}% | liq $${Math.round(plus10Liquidity!).toLocaleString("en-US")} | ${tokenAddress}`,
-    url: "/radar",
+    url: `/base-cases/${row.id}`,
     mint: tokenAddress,
     decisionId: row.id,
     tokenCaseId: row.id,
@@ -448,6 +470,7 @@ export async function runBaseRadar(): Promise<Record<string, unknown>> {
       plus10RoiMinPct: 25,
       momentum5To10MinPct: 0,
       minPlus10LiquidityUsd: MIN_PLUS10_LIQUIDITY_USD,
+      requiresUniswapDex: true,
     },
     offered: discovery.offered,
     admitted: discovery.admitted,
