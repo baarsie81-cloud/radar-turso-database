@@ -92,10 +92,10 @@ async function fetchPools(
   const json = await fetchJson(
     `https://api.geckoterminal.com/api/v2/networks/${network}/pools/multi/${encodedAddresses}`,
   );
-  const pools = Array.isArray(json?.data)
+  const pools: Pool[] = Array.isArray(json?.data)
     ? json.data.map(poolFromResource).filter((pool: Pool | null): pool is Pool => pool != null)
     : [];
-  return new Map(pools.map((pool) => [pool.address.toLowerCase(), pool]));
+  return new Map(pools.map((pool: Pool) => [pool.address.toLowerCase(), pool]));
 }
 
 async function ensureSchema(client: Client): Promise<void> {
