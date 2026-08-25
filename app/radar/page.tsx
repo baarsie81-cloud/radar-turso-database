@@ -49,7 +49,14 @@ async function loadRows(): Promise<{ rows: BaseRow[]; error: string | null }> {
              d.plus10_liquidity_usd, d.status AS decision, d.reject_reason
       FROM base_radar_cases c
       LEFT JOIN base_radar_decisions d ON d.case_id = c.id
-      ORDER BY c.first_seen_at DESC
+      ORDER BY
+        CASE d.status
+          WHEN 'PASS' THEN 0
+          WHEN 'REJECT' THEN 2
+          ELSE 1
+        END ASC,
+        CASE WHEN d.status = 'PASS' THEN d.plus10_roi_pct END DESC,
+        c.first_seen_at DESC
       LIMIT 200
     `);
     return {
@@ -101,7 +108,7 @@ export default async function RadarPage() {
           Admission: ≤15m oud, ≥$10k entry liquidity + echte activiteit · PASS: +10 ≥25%, momentum ≥0, +10 liquidity ≥$15k.
         </p>
         <p style={{ margin: "0.25rem 0", color: "#555", fontSize: "0.9rem" }}>
-          Token address = het 0x-contract dat je rechtstreeks in Uniswap op Base kunt plakken.
+          Token address = het 0x-contract dat je rechtstreeks in Uniswap op Base kunt plakken. Sortering: PASS → PENDING → REJECT; binnen de groep meest relevant/vers bovenaan.
         </p>
         <RadarRefreshBar fetchedAt={fetchedAt} />
       </header>
