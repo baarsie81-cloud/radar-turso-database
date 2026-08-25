@@ -13,14 +13,6 @@
       "schedule": "*/5 * * * *"
     },
     {
-      "path": "/api/cron/early",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/hypothesis",
-      "schedule": "*/30 * * * *"
-    },
-    {
       "path": "/api/cron/survivor",
       "schedule": "*/5 * * * *"
     },
