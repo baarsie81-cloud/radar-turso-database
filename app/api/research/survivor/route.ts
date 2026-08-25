@@ -1,7 +1,7 @@
 import { createTursoClient } from "../../../../src/db/client";
 import { evaluateSurvivorObservation } from "../../../../src/research/survivor/evaluate";
 import type { SnapshotStage } from "../../../../src/domain/types";
-import type { SurvivorObservationInput, SurvivalHorizonMinutes } from "../../../../src/research/survivor/types";
+import type { SurvivorObservationInput, SurvivorChain, SurvivalHorizonMinutes } from "../../../../src/research/survivor/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,22 +12,29 @@ function num(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export async function GET(): Promise<Response> {
+type TableSet = {
+  cases: string;
+  snapshots: string;
+  checks: string;
+  cohort: "LEGACY" | "ACTIVE";
+};
+
+async function readTableSet(tableSet: TableSet) {
   const client = await createTursoClient();
   const casesResult = await client.execute(
     `SELECT id, chain, pool_address, symbol, launched_at, first_seen_at, entry_price,
             entry_liquidity_usd, status
-       FROM survivor_research_cases
+       FROM ${tableSet.cases}
       ORDER BY chain, id`,
   );
   const snapshotsResult = await client.execute(
     `SELECT case_id, stage, captured_at, price, liquidity_usd
-       FROM survivor_research_snapshots
+       FROM ${tableSet.snapshots}
       ORDER BY case_id, captured_at`,
   );
   const checksResult = await client.execute(
     `SELECT case_id, horizon_minutes, captured_at, tradeable, liquidity_usd
-       FROM survivor_research_checks
+       FROM ${tableSet.checks}
       ORDER BY case_id, horizon_minutes`,
   );
 
@@ -57,10 +64,10 @@ export async function GET(): Promise<Response> {
     checksByCase.set(caseId, rows);
   }
 
-  const cases = casesResult.rows.map((row) => {
+  return casesResult.rows.map((row) => {
     const id = Number(row.id);
     const input: SurvivorObservationInput = {
-      chain: String(row.chain) as SurvivorObservationInput["chain"],
+      chain: String(row.chain) as SurvivorChain,
       assetId: String(row.pool_address),
       symbol: row.symbol == null ? null : String(row.symbol),
       launchedAt: Number(row.launched_at),
@@ -80,6 +87,7 @@ export async function GET(): Promise<Response> {
     });
     const decision = evaluateSurvivorObservation(input, 60).radarDecision;
     return {
+      cohort: tableSet.cohort,
       id,
       chain: input.chain,
       symbol: input.symbol,
@@ -99,13 +107,37 @@ export async function GET(): Promise<Response> {
       horizons,
     };
   });
+}
 
-  const summary = ["SOLANA", "BNB"].map((chain) => {
+export async function GET(): Promise<Response> {
+  const legacy = await readTableSet({
+    cases: "survivor_research_cases",
+    snapshots: "survivor_research_snapshots",
+    checks: "survivor_research_checks",
+    cohort: "LEGACY",
+  });
+
+  let active: Awaited<ReturnType<typeof readTableSet>> = [];
+  try {
+    active = await readTableSet({
+      cases: "survivor_research_cases_v2",
+      snapshots: "survivor_research_snapshots_v2",
+      checks: "survivor_research_checks_v2",
+      cohort: "ACTIVE",
+    });
+  } catch {
+    active = [];
+  }
+
+  const cases = [...legacy, ...active];
+  const chains: SurvivorChain[] = ["SOLANA", "BNB", "BASE", "MONAD", "ARBITRUM"];
+  const summary = chains.map((chain) => {
     const rows = cases.filter((row) => row.chain === chain);
     const pass = rows.filter((row) => row.radar.status === "PASS");
     const oneHour = rows.map((row) => row.horizons[0]);
     return {
       chain,
+      cohort: rows[0]?.cohort ?? (chain === "SOLANA" || chain === "BNB" ? "LEGACY" : "ACTIVE"),
       cases: rows.length,
       withPlus10: rows.filter((row) => row.snapshots.some((s: any) => s.stage === "PLUS_10")).length,
       radarPass: pass.length,
@@ -115,5 +147,11 @@ export async function GET(): Promise<Response> {
     };
   });
 
-  return Response.json({ ok: true, summary, cases });
+  return Response.json({
+    ok: true,
+    activeChains: ["BASE", "MONAD", "ARBITRUM"],
+    legacyChains: ["SOLANA", "BNB"],
+    summary,
+    cases,
+  });
 }
