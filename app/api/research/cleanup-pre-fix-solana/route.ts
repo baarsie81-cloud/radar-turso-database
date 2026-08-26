@@ -4,10 +4,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const CLEAN_CUTOFF = 1787731063232; // 2026-08-26 09:57:43 Europe/Amsterdam
+const ONE_TIME_KEY = "radar-clean-826-a7f9";
 
 export async function GET(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
+  const url = new URL(request.url);
+  if (url.searchParams.get("key") !== ONE_TIME_KEY) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
