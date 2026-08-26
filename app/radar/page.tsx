@@ -17,7 +17,14 @@ async function loadRows(): Promise<{ rows: SolanaRadarRow[]; error: string | nul
       FROM solana_validated_cases c
       LEFT JOIN solana_validated_decisions d ON d.case_id = c.id
       WHERE c.status <> 'WAITING'
-      ORDER BY c.first_seen_at DESC, c.id DESC
+      ORDER BY
+        CASE
+          WHEN d.execution_status IS NOT NULL THEN 0
+          WHEN d.status IN ('PASS','REJECT') THEN 1
+          ELSE 2
+        END,
+        COALESCE(d.decided_at, c.first_seen_at) DESC,
+        c.id DESC
       LIMIT 200
     `);
     return {
