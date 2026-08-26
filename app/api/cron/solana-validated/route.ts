@@ -1,10 +1,25 @@
 import { runSolanaValidatedRadar } from "../../../../src/solanaValidated/run";
+import { createTursoClient } from "../../../../src/db/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function deleteInvalidWaiting(): Promise<number> {
+  const client = await createTursoClient();
+  try {
+    const cutoff = Date.now() - 15 * 60_000;
+    const result = await client.execute({
+      sql: "DELETE FROM solana_validated_cases WHERE status='WAITING' AND pool_created_at IS NOT NULL AND pool_created_at <= ?",
+      args: [cutoff],
+    });
+    return result.rowsAffected;
+  } finally {
+    client.close();
+  }
 }
 
 export async function GET(request: Request) {
@@ -17,7 +32,8 @@ export async function GET(request: Request) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       const result = await runSolanaValidatedRadar();
-      return Response.json({ ok: true, ...result, retryAttempt: attempt });
+      const invalidWaitingDeleted = await deleteInvalidWaiting();
+      return Response.json({ ok: true, ...result, invalidWaitingDeleted, retryAttempt: attempt });
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
