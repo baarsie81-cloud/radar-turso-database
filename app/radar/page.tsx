@@ -16,6 +16,7 @@ async function loadRows(): Promise<{ rows: SolanaRadarRow[]; error: string | nul
              d.execution_status, d.round_trip_loss_pct, d.status AS decision, d.reject_reason
       FROM solana_validated_cases c
       LEFT JOIN solana_validated_decisions d ON d.case_id = c.id
+      WHERE c.status <> 'WAITING'
       ORDER BY c.first_seen_at DESC, c.id DESC
       LIMIT 200
     `);
@@ -57,7 +58,7 @@ export default async function RadarPage() {
         <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>Moonshot Radar · Solana · Post-Validation Research Mode</p>
         <h1 style={{ margin: "0.25rem 0" }}>Solana Validated Radar</h1>
         <p style={{ margin: "0.25rem 0", color: "#555" }}>
-          Alleen pools die de eerste 15 minuten hebben overleefd: 15–60m oud, ≥$25k liquiditeit + echte activiteit.
+          Alleen coins die de 15-minuten survival-gate halen verschijnen hier: ≥$25k liquiditeit + echte activiteit.
         </p>
         <p style={{ margin: "0.25rem 0", color: "#555", fontSize: "0.9rem" }}>
           PASS: +10 ≥25%, momentum ≥0, daarna verplichte Jupiter buy + sell round-trip en maximaal 3% round-trip verlies. Zonder uitvoerbare route geen push.
@@ -68,9 +69,9 @@ export default async function RadarPage() {
       <PushSettings />
 
       <section style={{ display: "flex", gap: "1rem", flexWrap: "wrap", margin: "1rem 0" }}>
-        <strong>{rows.length} cases</strong>
+        <strong>{rows.length} validated cases</strong>
         <span>{passes} executable PASS</span>
-        <span>{pending} pending</span>
+        <span>{pending} pending decision</span>
       </section>
 
       {error ? <p role="alert">Turso error: {error}</p> : <SolanaRadarTable rows={rows} />}
