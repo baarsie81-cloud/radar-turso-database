@@ -19,9 +19,10 @@ async function loadRows(): Promise<{ rows: SolanaRadarRow[]; error: string | nul
       WHERE c.status <> 'WAITING'
       ORDER BY
         CASE
-          WHEN d.execution_status IS NOT NULL THEN 0
-          WHEN d.status IN ('PASS','REJECT') THEN 1
-          ELSE 2
+          WHEN d.status = 'PASS' THEN 0
+          WHEN d.status = 'REJECT' THEN 1
+          WHEN d.status = 'CANDIDATE' THEN 2
+          ELSE 3
         END,
         COALESCE(d.decided_at, c.first_seen_at) DESC,
         c.id DESC
@@ -57,6 +58,7 @@ export default async function RadarPage() {
   const fetchedAt = Date.now();
   const { rows, error } = await loadRows();
   const passes = rows.filter((row) => row.decision === "PASS").length;
+  const candidates = rows.filter((row) => row.decision === "CANDIDATE").length;
   const pending = rows.filter((row) => row.decision == null).length;
 
   return (
@@ -68,7 +70,7 @@ export default async function RadarPage() {
           Alleen coins die de 15-minuten survival-gate halen verschijnen hier: ≥$25k liquiditeit + echte activiteit.
         </p>
         <p style={{ margin: "0.25rem 0", color: "#555", fontSize: "0.9rem" }}>
-          PASS: +10 ≥25%, momentum ≥0, daarna verplichte Jupiter buy + sell round-trip en maximaal 3% round-trip verlies. Zonder uitvoerbare route geen push.
+          +10 ≥25% en momentum ≥0 maakt eerst een CANDIDATE. Circa vijf minuten later moet Jupiter opnieuw een buy + sell round-trip leveren met maximaal 3% verlies. Pas daarna wordt het PASS en volgt push.
         </p>
         <RadarRefreshBar fetchedAt={fetchedAt} />
       </header>
@@ -77,8 +79,9 @@ export default async function RadarPage() {
 
       <section style={{ display: "flex", gap: "1rem", flexWrap: "wrap", margin: "1rem 0" }}>
         <strong>{rows.length} validated cases</strong>
-        <span>{passes} executable PASS</span>
-        <span>{pending} pending decision</span>
+        <span>{passes} confirmed PASS</span>
+        <span>{candidates} awaiting +15 execution</span>
+        <span>{pending} pending +10</span>
       </section>
 
       {error ? <p role="alert">Turso error: {error}</p> : <SolanaRadarTable rows={rows} />}
