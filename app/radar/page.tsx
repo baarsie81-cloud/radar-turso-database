@@ -1,90 +1,28 @@
 import { createTursoClient } from "../../src/db/client";
 import { PushSettings } from "../../components/push-settings";
 import { RadarRefreshBar } from "../../components/radar-refresh";
-import { SolanaRadarTable, type SolanaRadarRow } from "../../components/solana-radar-table";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-async function loadRows(): Promise<{ rows: SolanaRadarRow[]; error: string | null }> {
-  if (!process.env.TURSO_DATABASE_URL) return { rows: [], error: "Turso is not configured." };
-  const client = await createTursoClient();
-  try {
-    const result = await client.execute(`
-      SELECT c.id, c.symbol, c.mint, c.first_seen_at, c.entry_liquidity_usd,
-             d.plus5_roi_pct, d.plus10_roi_pct, d.momentum_5_to_10_pct,
-             d.execution_status, d.round_trip_loss_pct, d.status AS decision, d.reject_reason
-      FROM solana_validated_cases c
-      LEFT JOIN solana_validated_decisions d ON d.case_id = c.id
-      WHERE c.status <> 'WAITING'
-      ORDER BY
-        CASE
-          WHEN d.status = 'PASS' THEN 0
-          WHEN d.status = 'REJECT' THEN 1
-          WHEN d.status = 'CANDIDATE' THEN 2
-          ELSE 3
-        END,
-        COALESCE(d.decided_at, c.first_seen_at) DESC,
-        c.id DESC
-      LIMIT 200
-    `);
-    return {
-      rows: result.rows.map((row) => ({
-        id: Number(row.id),
-        symbol: row.symbol == null ? null : String(row.symbol),
-        mint: String(row.mint),
-        firstSeenAt: Number(row.first_seen_at),
-        entryLiquidityUsd: Number(row.entry_liquidity_usd),
-        plus5RoiPct: row.plus5_roi_pct == null ? null : Number(row.plus5_roi_pct),
-        plus10RoiPct: row.plus10_roi_pct == null ? null : Number(row.plus10_roi_pct),
-        momentum: row.momentum_5_to_10_pct == null ? null : Number(row.momentum_5_to_10_pct),
-        executionStatus: row.execution_status == null ? null : String(row.execution_status),
-        roundTripLossPct: row.round_trip_loss_pct == null ? null : Number(row.round_trip_loss_pct),
-        decision: row.decision == null ? null : String(row.decision),
-        rejectReason: row.reject_reason == null ? null : String(row.reject_reason),
-      })),
-      error: null,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("no such table: solana_validated_cases")) return { rows: [], error: null };
-    return { rows: [], error: message };
-  } finally {
-    client.close();
-  }
+type Row={id:number;symbol:string;name:string;binanceSymbol:string;entryAt:number;marketCap:number;volume:number;ratio:number;h1:number|null;h24:number|null;d7:number|null;confirm:number|null;spread:number|null;decision:string|null;reason:string|null};
+
+async function loadRows():Promise<{rows:Row[];error:string|null}>{
+  const c=await createTursoClient();
+  try{
+    const r=await c.execute(`SELECT c.id,c.symbol,c.name,c.binance_symbol,c.entry_at,c.market_cap_usd,c.volume_24h_usd,c.volume_cap_ratio,c.change_1h_pct,c.change_24h_pct,c.change_7d_pct,d.confirm_roi_pct,d.spread_pct,d.status decision,d.reject_reason FROM microcap_cases c LEFT JOIN microcap_decisions d ON d.case_id=c.id ORDER BY CASE WHEN d.status='PASS' THEN 0 WHEN d.status='REJECT' THEN 1 ELSE 2 END,COALESCE(d.decided_at,c.entry_at) DESC LIMIT 200`);
+    return{rows:r.rows.map(x=>({id:Number(x.id),symbol:String(x.symbol),name:String(x.name),binanceSymbol:String(x.binance_symbol),entryAt:Number(x.entry_at),marketCap:Number(x.market_cap_usd),volume:Number(x.volume_24h_usd),ratio:Number(x.volume_cap_ratio),h1:x.change_1h_pct==null?null:Number(x.change_1h_pct),h24:x.change_24h_pct==null?null:Number(x.change_24h_pct),d7:x.change_7d_pct==null?null:Number(x.change_7d_pct),confirm:x.confirm_roi_pct==null?null:Number(x.confirm_roi_pct),spread:x.spread_pct==null?null:Number(x.spread_pct),decision:x.decision==null?null:String(x.decision),reason:x.reject_reason==null?null:String(x.reject_reason)})),error:null};
+  }catch(e){const m=e instanceof Error?e.message:String(e);if(m.includes("no such table: microcap_cases"))return{rows:[],error:null};return{rows:[],error:m};}finally{c.close();}
 }
+function pct(v:number|null){return v==null?"—":`${v>=0?"+":""}${v.toFixed(1)}%`;}
+function usd(v:number){return `$${Math.round(v).toLocaleString()}`;}
 
-export default async function RadarPage() {
-  const fetchedAt = Date.now();
-  const { rows, error } = await loadRows();
-  const passes = rows.filter((row) => row.decision === "PASS").length;
-  const candidates = rows.filter((row) => row.decision === "CANDIDATE").length;
-  const pending = rows.filter((row) => row.decision == null).length;
-
-  return (
-    <main style={{ padding: "1.5rem", fontFamily: "system-ui, sans-serif", maxWidth: 1350, margin: "0 auto" }}>
-      <header style={{ marginBottom: "1rem" }}>
-        <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>Moonshot Radar · Solana · Post-Validation Research Mode</p>
-        <h1 style={{ margin: "0.25rem 0" }}>Solana Validated Radar</h1>
-        <p style={{ margin: "0.25rem 0", color: "#555" }}>
-          Alleen coins die de 15-minuten survival-gate halen verschijnen hier: ≥$25k liquiditeit + echte activiteit.
-        </p>
-        <p style={{ margin: "0.25rem 0", color: "#555", fontSize: "0.9rem" }}>
-          +10 ≥25% en momentum ≥0 maakt eerst een CANDIDATE. Circa vijf minuten later moet Jupiter opnieuw een buy + sell round-trip leveren met maximaal 3% verlies. Pas daarna wordt het PASS en volgt push.
-        </p>
-        <RadarRefreshBar fetchedAt={fetchedAt} />
-      </header>
-
-      <PushSettings />
-
-      <section style={{ display: "flex", gap: "1rem", flexWrap: "wrap", margin: "1rem 0" }}>
-        <strong>{rows.length} validated cases</strong>
-        <span>{passes} confirmed PASS</span>
-        <span>{candidates} awaiting +15 execution</span>
-        <span>{pending} pending +10</span>
-      </section>
-
-      {error ? <p role="alert">Turso error: {error}</p> : <SolanaRadarTable rows={rows} />}
-    </main>
-  );
+export default async function RadarPage(){
+  const fetchedAt=Date.now();const{rows,error}=await loadRows();const pass=rows.filter(x=>x.decision==="PASS").length;const pending=rows.filter(x=>x.decision==null).length;
+  return <main style={{padding:"1.5rem",fontFamily:"system-ui, sans-serif",maxWidth:1450,margin:"0 auto"}}>
+    <header><p style={{margin:0,color:"#666",fontSize:"0.85rem"}}>Moonshot Radar · Established Micro-Cap Research</p><h1 style={{margin:"0.25rem 0"}}>Established Micro-Cap Momentum Radar</h1><p style={{margin:"0.25rem 0",color:"#555"}}>Geen newborns meer. Alleen coins met bewezen marktgeschiedenis en actieve Binance USDT spotmarkt.</p><p style={{margin:"0.25rem 0",color:"#555",fontSize:"0.9rem"}}>Admission: 7+ dagen historie, $8–300m market cap, ≥$2m 24u volume, volume/cap ≥8%, +3% tot +35% 24u momentum, actieve Binance spotmarkt en spread ≤0,75%. Na 15 minuten moet momentum nog minimaal +2% doorzetten voordat PASS + push volgt.</p><RadarRefreshBar fetchedAt={fetchedAt}/></header>
+    <PushSettings/>
+    <section style={{display:"flex",gap:"1rem",flexWrap:"wrap",margin:"1rem 0"}}><strong>{rows.length} cases</strong><span>{pass} confirmed PASS</span><span>{pending} awaiting +15</span></section>
+    {error?<p role="alert">Turso error: {error}</p>:<div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",width:"100%",fontSize:"0.88rem"}}><thead><tr>{["Coin","Venue","Entry","MCap","24h vol","Vol/Cap","1h","24h","7d","+15","Spread","Decision"].map(h=><th key={h} style={{textAlign:"left",padding:"0.5rem",borderBottom:"1px solid #ddd"}}>{h}</th>)}</tr></thead><tbody>{rows.map(r=><tr key={r.id}><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}}><strong>{r.symbol}</strong><br/><span style={{color:"#666"}}>{r.name}</span></td><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}}>{r.binanceSymbol}</td><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}}>{new Date(r.entryAt).toLocaleString()}</td><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}}>{usd(r.marketCap)}</td><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}}>{usd(r.volume)}</td><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}}>{(r.ratio*100).toFixed(1)}%</td><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}}>{pct(r.h1)}</td><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}}>{pct(r.h24)}</td><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}}>{pct(r.d7)}</td><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}}>{pct(r.confirm)}</td><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}}>{r.spread==null?"—":`${r.spread.toFixed(3)}%`}</td><td style={{padding:"0.5rem",borderBottom:"1px solid #eee"}} title={r.reason??undefined}>{r.decision??"PENDING"}</td></tr>)}</tbody></table></div>}
+  </main>;
 }
