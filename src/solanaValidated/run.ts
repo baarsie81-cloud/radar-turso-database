@@ -7,7 +7,7 @@ import { createWebPushSender } from "../push/webpush";
 import type { PushPayload } from "../push/types";
 
 const NETWORK = "solana";
-const RADAR_VERSION = "2.4-solana-post-validation";
+const RADAR_VERSION = "2.4-solana-post-validation-v2";
 const MIN_VALIDATION_AGE_MS = 15 * 60_000;
 const MAX_VALIDATION_AGE_MS = 60 * 60_000;
 const MIN_ENTRY_LIQUIDITY_USD = 25_000;
@@ -16,6 +16,7 @@ const MAX_DUE_VALIDATIONS_PER_RUN = 10;
 const MAX_ACTIVE_PER_RUN = 10;
 const MAX_DUE_BACKLOG = 30;
 const MAX_ROUND_TRIP_LOSS_PCT = 3;
+const PLUS_15_CONFIRM_DELAY_MS = 4 * 60_000;
 const DISCOVERY_PAGES = [1] as const;
 const GECKO_REQUEST_GAP_MS = 1_500;
 const GECKO_TIMEOUT_MS = 8_000;
@@ -28,6 +29,8 @@ const MAJOR_MINTS = new Set([SOL_MINT, USDC_MINT, USDT_MINT]);
 type Pool={poolAddress:string;mint:string;symbol:string|null;createdAt:number;price:number;liquidityUsd:number|null;volumeH1Usd:number|null;buysH1:number;sellsH1:number};
 type CaseRow={id:number;poolAddress:string;mint:string;symbol:string|null;poolCreatedAt:number;firstSeenAt:number;entryPrice:number;entryLiquidityUsd:number;status:string};
 type RunError={caseId:number|null;message:string};
+
+type EvalOutcome={status:string;pushed:boolean};
 
 class GeckoRateLimitError extends Error{constructor(){super("GeckoTerminal 429 rate limit");this.name="GeckoRateLimitError";}}
 
@@ -61,11 +64,50 @@ function validationPass(p:Pool){return p.liquidityUsd!=null&&p.liquidityUsd>=MIN
 async function validateWaiting(c:Client,now:number){const due=await listDueWaiting(c,now);if(!due.length)return{activated:0,invalidDeleted:0,validationDue:0};const pools=await fetchPools(due.map(r=>r.poolAddress));let activated=0,invalidDeleted=0;for(const row of due){const p=pools.get(row.poolAddress.toLowerCase());if(!p||!validationPass(p)){await c.execute({sql:"DELETE FROM solana_validated_cases WHERE id=?",args:[row.id]});invalidDeleted++;continue;}await c.execute({sql:`UPDATE solana_validated_cases SET status='ACTIVE',validated_at=?,first_seen_at=?,entry_price=?,entry_liquidity_usd=?,entry_volume_h1_usd=?,entry_buys_h1=?,entry_sells_h1=?,validation_reason=NULL WHERE id=?`,args:[now,now,p.price,p.liquidityUsd!,p.volumeH1Usd,p.buysH1,p.sellsH1,row.id]});await c.execute({sql:`INSERT OR IGNORE INTO solana_validated_snapshots(case_id,stage,captured_at,price,liquidity_usd) VALUES(?, 'INITIAL', ?, ?, ?)`,args:[row.id,now,p.price,p.liquidityUsd]});activated++;}return{activated,invalidDeleted,validationDue:due.length};}
 
 async function writeSnapshots(c:Client,row:CaseRow,p:Pool,now:number){const age=(now-row.firstSeenAt)/60000;for(const[stage,due]of STAGES){if(age<due)continue;await c.execute({sql:`INSERT OR IGNORE INTO solana_validated_snapshots(case_id,stage,captured_at,price,liquidity_usd) VALUES(?,?,?,?,?)`,args:[row.id,stage,now,p.price,p.liquidityUsd]});}if(age>=60)await c.execute({sql:"UPDATE solana_validated_cases SET status='CLOSED' WHERE id=?",args:[row.id]});}
-async function evaluateDueCase(c:Client,row:CaseRow){const ex=await c.execute({sql:"SELECT 1 FROM solana_validated_decisions WHERE case_id=?",args:[row.id]});if(ex.rows.length)return null;const r=await c.execute({sql:"SELECT * FROM solana_validated_snapshots WHERE case_id=? AND stage IN ('INITIAL','PLUS_5','PLUS_10')",args:[row.id]});const m=new Map(r.rows.map(s=>[String(s.stage),s]));const i=m.get("INITIAL"),p5=m.get("PLUS_5"),p10=m.get("PLUS_10");if(!i||!p5||!p10)return null;const d=evaluateRadar24({tokenCaseId:row.id,decisionStage:"PLUS_10",decidedAt:Number(p10.captured_at),radarVersion:RADAR_VERSION,entry:{entryPrice:row.entryPrice,entryValid:true},snapshots:{INITIAL:{stage:"INITIAL",capturedAt:Number(i.captured_at),price:Number(i.price),marketCap:null,liquidityUsd:asNumber(i.liquidity_usd)},PLUS_5:{stage:"PLUS_5",capturedAt:Number(p5.captured_at),price:Number(p5.price),marketCap:null,liquidityUsd:asNumber(p5.liquidity_usd)},PLUS_10:{stage:"PLUS_10",capturedAt:Number(p10.captured_at),price:Number(p10.price),marketCap:null,liquidityUsd:asNumber(p10.liquidity_usd)}}});let status=d.decisionStatus;let rejectReason:string|null=d.rejectReason;let executionStatus:string|null=null;let loss:number|null=null;if(status==="PASS"){const e=await validateJupiterExecution(row.mint);executionStatus=e.status;loss=e.roundTripLossPct;if(e.status!=="EXECUTION_PASS"){status="REJECT";rejectReason=e.reason??"EXECUTION_FAIL";}else if(loss==null||loss>MAX_ROUND_TRIP_LOSS_PCT){status="REJECT";rejectReason="EXECUTION_FAIL_ROUND_TRIP_LOSS_GT_3PCT";}}
-await c.execute({sql:`INSERT INTO solana_validated_decisions(case_id,decided_at,status,reject_reason,plus5_roi_pct,plus10_roi_pct,momentum_5_to_10_pct,plus10_liquidity_usd,execution_status,round_trip_loss_pct,radar_version) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,args:[row.id,Number(p10.captured_at),status,rejectReason,d.plus5RoiPct,d.plus10RoiPct,d.momentum5To10Pct,asNumber(p10.liquidity_usd),executionStatus,loss,RADAR_VERSION]});if(status!=="PASS")return{status,pushed:false};const claim=await c.execute({sql:"INSERT OR IGNORE INTO solana_validated_push_deliveries(case_id,sent_at) VALUES(?,?)",args:[row.id,Date.now()]});if(!claim.rowsAffected)return{status,pushed:false};const send=createWebPushSender({getSubscriptions:()=>getPushSubscriptions(c)});const payload:PushPayload={title:"🚀 Solana Radar · Validated",body:`${row.symbol??"SOL token"} | +10 ${d.plus10RoiPct?.toFixed(1)??"?"}% | RT loss ${loss?.toFixed(2)??"?"}%`,url:`/solana-cases/${row.id}`,mint:row.mint,decisionId:row.id,tokenCaseId:row.id,decisionStatus:"PASS",decisionStage:"PLUS_10",plus10RoiPct:d.plus10RoiPct,momentum5To10Pct:d.momentum5To10Pct,symbol:row.symbol};await send(payload);return{status,pushed:true};}
+
+async function finalizeCandidate(c:Client,row:CaseRow,existing:Row):Promise<EvalOutcome|null>{
+  if(String(existing.status)!=="CANDIDATE")return null;
+  const candidateAt=Number(existing.decided_at);
+  if(Date.now()-candidateAt<PLUS_15_CONFIRM_DELAY_MS)return null;
+  const execution=await validateJupiterExecution(row.mint);
+  const loss=execution.roundTripLossPct;
+  let status="PASS";
+  let rejectReason:string|null=null;
+  if(execution.status!=="EXECUTION_PASS"){
+    status="REJECT";
+    rejectReason=execution.reason??"EXECUTION_FAIL_AT_PLUS_15";
+  }else if(loss==null||loss>MAX_ROUND_TRIP_LOSS_PCT){
+    status="REJECT";
+    rejectReason="EXECUTION_FAIL_ROUND_TRIP_LOSS_GT_3PCT_AT_PLUS_15";
+  }
+  await c.execute({sql:"UPDATE solana_validated_decisions SET decided_at=?,status=?,reject_reason=?,execution_status=?,round_trip_loss_pct=?,radar_version=? WHERE case_id=?",args:[Date.now(),status,rejectReason,execution.status,loss,RADAR_VERSION,row.id]});
+  if(status!=="PASS")return{status,pushed:false};
+  const claim=await c.execute({sql:"INSERT OR IGNORE INTO solana_validated_push_deliveries(case_id,sent_at) VALUES(?,?)",args:[row.id,Date.now()]});
+  if(!claim.rowsAffected)return{status,pushed:false};
+  const send=createWebPushSender({getSubscriptions:()=>getPushSubscriptions(c)});
+  const plus10RoiPct=asNumber(existing.plus10_roi_pct);
+  const momentum5To10Pct=asNumber(existing.momentum_5_to_10_pct);
+  const payload:PushPayload={title:"🚀 Solana Radar · Confirmed",body:`${row.symbol??"SOL token"} | +10 ${plus10RoiPct?.toFixed(1)??"?"}% | +15 RT ${loss?.toFixed(2)??"?"}%`,url:`/solana-cases/${row.id}`,mint:row.mint,decisionId:row.id,tokenCaseId:row.id,decisionStatus:"PASS",decisionStage:"PLUS_10",plus10RoiPct,momentum5To10Pct,symbol:row.symbol};
+  await send(payload);
+  return{status,pushed:true};
+}
+
+async function evaluateDueCase(c:Client,row:CaseRow):Promise<EvalOutcome|null>{
+  const ex=await c.execute({sql:"SELECT * FROM solana_validated_decisions WHERE case_id=?",args:[row.id]});
+  if(ex.rows.length)return finalizeCandidate(c,row,ex.rows[0]);
+  const r=await c.execute({sql:"SELECT * FROM solana_validated_snapshots WHERE case_id=? AND stage IN ('INITIAL','PLUS_5','PLUS_10')",args:[row.id]});
+  const m=new Map(r.rows.map(s=>[String(s.stage),s]));
+  const i=m.get("INITIAL"),p5=m.get("PLUS_5"),p10=m.get("PLUS_10");
+  if(!i||!p5||!p10)return null;
+  const d=evaluateRadar24({tokenCaseId:row.id,decisionStage:"PLUS_10",decidedAt:Number(p10.captured_at),radarVersion:RADAR_VERSION,entry:{entryPrice:row.entryPrice,entryValid:true},snapshots:{INITIAL:{stage:"INITIAL",capturedAt:Number(i.captured_at),price:Number(i.price),marketCap:null,liquidityUsd:asNumber(i.liquidity_usd)},PLUS_5:{stage:"PLUS_5",capturedAt:Number(p5.captured_at),price:Number(p5.price),marketCap:null,liquidityUsd:asNumber(p5.liquidity_usd)},PLUS_10:{stage:"PLUS_10",capturedAt:Number(p10.captured_at),price:Number(p10.price),marketCap:null,liquidityUsd:asNumber(p10.liquidity_usd)}}});
+  const status=d.decisionStatus==="PASS"?"CANDIDATE":d.decisionStatus;
+  const rejectReason=d.decisionStatus==="PASS"?"AWAITING_PLUS_15_EXECUTION_CONFIRMATION":d.rejectReason;
+  await c.execute({sql:`INSERT INTO solana_validated_decisions(case_id,decided_at,status,reject_reason,plus5_roi_pct,plus10_roi_pct,momentum_5_to_10_pct,plus10_liquidity_usd,execution_status,round_trip_loss_pct,radar_version) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,args:[row.id,Number(p10.captured_at),status,rejectReason,d.plus5RoiPct,d.plus10RoiPct,d.momentum5To10Pct,asNumber(p10.liquidity_usd),null,null,RADAR_VERSION]});
+  return{status,pushed:false};
+}
 
 export async function runSolanaValidatedRadar(){const c=await createTursoClient();const now=Date.now();const errors:RunError[]=[];let rateLimited=false;try{await ensureSchema(c);const cleanup=await cleanupDatabase(c,now);let validation={activated:0,invalidDeleted:0,validationDue:0};try{validation=await validateWaiting(c,now);}catch(e){if(e instanceof GeckoRateLimitError){rateLimited=true;errors.push({caseId:null,message:e.message});}else throw e;}
 let decisions=0,passes=0,pushes=0;if(!rateLimited){const active=await listActive(c);if(active.length){await sleep(GECKO_REQUEST_GAP_MS);try{const pools=await fetchPools(active.map(r=>r.poolAddress));for(const row of active){const p=pools.get(row.poolAddress.toLowerCase());if(!p)continue;await writeSnapshots(c,row,p,now);const out=await evaluateDueCase(c,row);if(out){decisions++;if(out.status==="PASS")passes++;if(out.pushed)pushes++;}}}catch(e){if(e instanceof GeckoRateLimitError){rateLimited=true;errors.push({caseId:null,message:e.message});}else throw e;}}}
 let collection={discovered:0,waitingAdded:0};if(!rateLimited){await sleep(GECKO_REQUEST_GAP_MS);try{collection=await collectWaiting(c,now);}catch(e){if(e instanceof GeckoRateLimitError){rateLimited=true;errors.push({caseId:null,message:e.message});}else throw e;}}
-const counts=await c.execute("SELECT COUNT(*) cases,SUM(CASE WHEN status='WAITING' THEN 1 ELSE 0 END) waiting,SUM(CASE WHEN status='ACTIVE' THEN 1 ELSE 0 END) active FROM solana_validated_cases");const summary={mode:"SOLANA_POST_VALIDATION",provider:{name:"GeckoTerminal",rateLimited},limits:{newPerRun:MAX_NEW_CANDIDATES_PER_RUN,duePerRun:MAX_DUE_VALIDATIONS_PER_RUN,activePerRun:MAX_ACTIVE_PER_RUN,maxDueBacklog:MAX_DUE_BACKLOG},validation:{minAgeMinutes:15,maxAgeMinutes:60,minEntryLiquidityUsd:MIN_ENTRY_LIQUIDITY_USD},decision:{plus10RoiMinPct:25,momentum5To10MinPct:0,jupiterRoundTripRequired:true,maxRoundTripLossPct:MAX_ROUND_TRIP_LOSS_PCT},cleanup,...validation,...collection,decisionsCreated:decisions,passesCreated:passes,pushesSent:pushes,totals:{cases:Number(counts.rows[0]?.cases??0),waiting:Number(counts.rows[0]?.waiting??0),active:Number(counts.rows[0]?.active??0)},errors};console.info("[solana-validated] cron finished",summary);return summary;}finally{c.close();}}
+const counts=await c.execute("SELECT COUNT(*) cases,SUM(CASE WHEN status='WAITING' THEN 1 ELSE 0 END) waiting,SUM(CASE WHEN status='ACTIVE' THEN 1 ELSE 0 END) active FROM solana_validated_cases");const summary={mode:"SOLANA_POST_VALIDATION",provider:{name:"GeckoTerminal",rateLimited},limits:{newPerRun:MAX_NEW_CANDIDATES_PER_RUN,duePerRun:MAX_DUE_VALIDATIONS_PER_RUN,activePerRun:MAX_ACTIVE_PER_RUN,maxDueBacklog:MAX_DUE_BACKLOG},validation:{minAgeMinutes:15,maxAgeMinutes:60,minEntryLiquidityUsd:MIN_ENTRY_LIQUIDITY_USD},decision:{plus10RoiMinPct:25,momentum5To10MinPct:0,plus15ExecutionConfirmation:true,jupiterRoundTripRequired:true,maxRoundTripLossPct:MAX_ROUND_TRIP_LOSS_PCT},cleanup,...validation,...collection,decisionsCreated:decisions,passesCreated:passes,pushesSent:pushes,totals:{cases:Number(counts.rows[0]?.cases??0),waiting:Number(counts.rows[0]?.waiting??0),active:Number(counts.rows[0]?.active??0)},errors};console.info("[solana-validated] cron finished",summary);return summary;}finally{c.close();}}
 export async function handleSolanaValidatedCron(request:Request){const secret=process.env.CRON_SECRET;if(!secret||request.headers.get("authorization")!==`Bearer ${secret}`)return Response.json({ok:false,error:"Unauthorized"},{status:401});try{return Response.json({ok:true,...await runSolanaValidatedRadar()});}catch(e){return Response.json({ok:false,error:e instanceof Error?e.message:String(e)},{status:500});}}
