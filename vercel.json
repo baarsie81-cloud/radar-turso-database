@@ -1,7 +1,7 @@
 {
   "crons": [
     {
-      "path": "/api/cron/solana-validated",
+      "path": "/api/cron/microcap",
       "schedule": "*/5 * * * *"
     }
   ]
